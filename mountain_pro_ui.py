@@ -18,11 +18,20 @@ from PIL import Image
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 
-from terrain_generator import TerrainGenerator
-from prompt_generator import MountainPromptGenerator
+# Old modules (still used for some features)
 from comfyui_integration import ComfyUIIntegration, StableDiffusionDirect
 from temporal_consistency import VideoCoherenceManager
 from video_generator import VideoGenerator
+
+# New core modules (Mountain Studio Pro v2.0)
+from core.config.preset_manager import PresetManager
+from core.terrain.heightmap_generator import HeightmapGenerator
+from core.terrain.hydraulic_erosion import HydraulicErosionSystem
+from core.terrain.thermal_erosion import ThermalErosionSystem
+from core.vegetation.biome_classifier import BiomeClassifier
+from core.vegetation.vegetation_placer import VegetationPlacer
+from core.rendering.pbr_splatmap_generator import PBRSplatmapGenerator
+from core.vfx.prompt_generator import VFXPromptGenerator
 
 
 class GenerationThread(QThread):
@@ -48,30 +57,85 @@ class GenerationThread(QThread):
             self.error.emit(f"Erreur: {str(e)}")
 
     def generate_terrain(self):
-        self.progress.emit(10, "Génération heightmap...")
-        terrain_gen = TerrainGenerator(
+        """Generate terrain using new HeightmapGenerator with advanced erosion"""
+        self.progress.emit(5, "Initialisation générateur...")
+
+        # Use preset if specified
+        if self.params.get('use_preset'):
+            preset_mgr = PresetManager()
+            config = preset_mgr.get_preset(self.params['preset_name'])
+        else:
+            config = {
+                'terrain': {
+                    'base_scale': self.params.get('scale', 100.0),
+                    'octaves': self.params.get('octaves', 8),
+                    'persistence': self.params.get('persistence', 0.5),
+                    'lacunarity': self.params.get('lacunarity', 2.0),
+                    'seed': self.params.get('seed', 42)
+                },
+                'erosion': {
+                    'hydraulic': {
+                        'enabled': self.params.get('hydraulic_enabled', True),
+                        'iterations': self.params.get('hydraulic_iterations', 50),
+                        'rain_amount': self.params.get('rain_amount', 0.01),
+                        'evaporation': self.params.get('evaporation', 0.5)
+                    },
+                    'thermal': {
+                        'enabled': self.params.get('thermal_enabled', True),
+                        'iterations': self.params.get('thermal_iterations', 30),
+                        'talus_angle': self.params.get('talus_angle', 0.7)
+                    }
+                }
+            }
+
+        terrain_gen = HeightmapGenerator(
             width=self.params['resolution'],
-            height=self.params['resolution']
+            height=self.params['resolution'],
+            config=config
         )
 
-        heightmap = terrain_gen.generate_heightmap(
-            scale=self.params['scale'],
-            octaves=self.params['octaves'],
-            persistence=self.params['persistence'],
-            lacunarity=self.params['lacunarity'],
-            mountain_type=self.params['mountain_type'],
-            seed=self.params['seed']
+        self.progress.emit(15, "Génération heightmap avec érosion...")
+        heightmap = terrain_gen.generate(
+            use_hydraulic=config['erosion']['hydraulic']['enabled'],
+            use_thermal=config['erosion']['thermal']['enabled']
         )
 
         self.progress.emit(40, "Génération normal map...")
-        normal_map = terrain_gen.generate_normal_map(strength=self.params['normal_strength'])
+        normal_map = terrain_gen.generate_normal_map(strength=self.params.get('normal_strength', 1.0))
 
-        self.progress.emit(60, "Génération depth map...")
+        self.progress.emit(55, "Génération depth map...")
         depth_map = terrain_gen.generate_depth_map()
 
-        self.progress.emit(80, "Génération AO et roughness...")
+        self.progress.emit(65, "Génération AO...")
         ao_map = terrain_gen.generate_ambient_occlusion()
-        roughness_map = terrain_gen.generate_roughness_map()
+
+        # Biome classification
+        biome_map = None
+        if self.params.get('generate_biomes', False):
+            self.progress.emit(75, "Classification biomes...")
+            biome_classifier = BiomeClassifier(
+                width=self.params['resolution'],
+                height=self.params['resolution']
+            )
+            biome_map = biome_classifier.classify(heightmap)
+
+        # Vegetation placement
+        tree_instances = None
+        density_map = None
+        if self.params.get('generate_vegetation', False) and biome_map is not None:
+            self.progress.emit(85, "Placement végétation...")
+            placer = VegetationPlacer(
+                self.params['resolution'],
+                self.params['resolution'],
+                heightmap,
+                biome_map
+            )
+            tree_instances = placer.place_vegetation(
+                density=self.params.get('vegetation_density', 0.5),
+                min_spacing=self.params.get('vegetation_spacing', 3.0),
+                use_clustering=self.params.get('use_clustering', True)
+            )
+            density_map = placer.generate_density_map()
 
         self.progress.emit(100, "Terminé!")
 
@@ -80,7 +144,9 @@ class GenerationThread(QThread):
             'normal_map': normal_map,
             'depth_map': depth_map,
             'ao_map': ao_map,
-            'roughness_map': roughness_map,
+            'biome_map': biome_map,
+            'tree_instances': tree_instances,
+            'density_map': density_map,
             'terrain_gen': terrain_gen
         }
 
@@ -162,15 +228,19 @@ class MountainProUI(QMainWindow):
         terrain_tab = self.create_terrain_controls()
         tabs.addTab(terrain_tab, "🗻 Terrain")
 
-        # Tab 2: Texture AI
+        # Tab 2: Vegetation (NEW)
+        vegetation_tab = self.create_vegetation_controls()
+        tabs.addTab(vegetation_tab, "🌲 Végétation")
+
+        # Tab 3: Texture AI
         texture_tab = self.create_texture_controls()
         tabs.addTab(texture_tab, "🎨 Texture AI")
 
-        # Tab 3: Caméra & Rendu
+        # Tab 4: Caméra & Rendu
         camera_tab = self.create_camera_controls()
         tabs.addTab(camera_tab, "🎥 Caméra")
 
-        # Tab 4: Export
+        # Tab 5: Export
         export_tab = self.create_export_controls()
         tabs.addTab(export_tab, "💾 Export")
 
@@ -248,11 +318,118 @@ class MountainProUI(QMainWindow):
         params_group.setLayout(params_layout)
         layout.addWidget(params_group)
 
+        # Presets (NEW)
+        preset_group = QGroupBox("⚡ Presets Professionnels")
+        preset_layout = QVBoxLayout()
+
+        self.use_preset_checkbox = QCheckBox("Utiliser un preset")
+        self.use_preset_checkbox.stateChanged.connect(self.toggle_preset_mode)
+        preset_layout.addWidget(self.use_preset_checkbox)
+
+        self.preset_combo = QComboBox()
+        preset_mgr = PresetManager()
+        for preset_name in preset_mgr.list_presets():
+            self.preset_combo.addItem(preset_name)
+        self.preset_combo.setEnabled(False)
+        preset_layout.addWidget(self.preset_combo)
+
+        preset_group.setLayout(preset_layout)
+        layout.addWidget(preset_group)
+
+        # Érosion avancée (NEW)
+        erosion_group = QGroupBox("🌊 Érosion Avancée")
+        erosion_layout = QVBoxLayout()
+
+        # Hydraulic erosion
+        self.hydraulic_checkbox = QCheckBox("Érosion Hydraulique")
+        self.hydraulic_checkbox.setChecked(True)
+        erosion_layout.addWidget(self.hydraulic_checkbox)
+
+        erosion_layout.addWidget(QLabel("Itérations hydrauliques:"))
+        self.hydraulic_iter_slider = self.create_slider_with_value(10, 200, 50)
+        erosion_layout.addLayout(self.hydraulic_iter_slider['layout'])
+
+        erosion_layout.addWidget(QLabel("Quantité pluie:"))
+        self.rain_slider = self.create_slider_with_value(1, 20, 10, scale=0.001)
+        erosion_layout.addLayout(self.rain_slider['layout'])
+
+        # Thermal erosion
+        self.thermal_checkbox = QCheckBox("Érosion Thermique")
+        self.thermal_checkbox.setChecked(True)
+        erosion_layout.addWidget(self.thermal_checkbox)
+
+        erosion_layout.addWidget(QLabel("Itérations thermiques:"))
+        self.thermal_iter_slider = self.create_slider_with_value(10, 100, 30)
+        erosion_layout.addLayout(self.thermal_iter_slider['layout'])
+
+        erosion_group.setLayout(erosion_layout)
+        layout.addWidget(erosion_group)
+
         # Bouton génération
-        self.generate_terrain_btn = QPushButton("🗻 Générer Terrain 3D")
+        self.generate_terrain_btn = QPushButton("🗻 Générer Terrain 3D (avec Érosion)")
         self.generate_terrain_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 10px; font-weight: bold; }")
         self.generate_terrain_btn.clicked.connect(self.generate_terrain)
         layout.addWidget(self.generate_terrain_btn)
+
+        layout.addStretch()
+
+        return widget
+
+    def create_vegetation_controls(self):
+        """Contrôles de végétation procédurale (NEW)"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # Enable vegetation
+        self.vegetation_enabled_checkbox = QCheckBox("Activer la génération de végétation")
+        self.vegetation_enabled_checkbox.setChecked(False)
+        self.vegetation_enabled_checkbox.stateChanged.connect(self.toggle_vegetation_controls)
+        layout.addWidget(self.vegetation_enabled_checkbox)
+
+        # Biome classification
+        biome_group = QGroupBox("🏔️ Classification Biomes")
+        biome_layout = QVBoxLayout()
+
+        self.biome_checkbox = QCheckBox("Classifier les biomes automatiquement")
+        self.biome_checkbox.setChecked(True)
+        self.biome_checkbox.setEnabled(False)
+        biome_layout.addWidget(self.biome_checkbox)
+
+        biome_info = QLabel("Les biomes déterminent le type de végétation:\n" +
+                           "• Alpine Tundra (haute altitude)\n" +
+                           "• Subalpine (pins épars)\n" +
+                           "• Montane Forest (forêt dense)\n" +
+                           "• Valley Floor (vallées)\n" +
+                           "• Water (lacs)")
+        biome_info.setStyleSheet("color: #888; font-size: 9pt;")
+        biome_layout.addWidget(biome_info)
+
+        biome_group.setLayout(biome_layout)
+        layout.addWidget(biome_group)
+
+        # Vegetation placement
+        veg_group = QGroupBox("🌲 Placement Végétation")
+        veg_layout = QVBoxLayout()
+
+        veg_layout.addWidget(QLabel("Densité globale:"))
+        self.veg_density_slider = self.create_slider_with_value(10, 100, 50, scale=0.01)
+        veg_layout.addLayout(self.veg_density_slider['layout'])
+
+        veg_layout.addWidget(QLabel("Espacement minimum (m):"))
+        self.veg_spacing_slider = self.create_slider_with_value(1, 10, 3, scale=0.1)
+        veg_layout.addLayout(self.veg_spacing_slider['layout'])
+
+        self.veg_clustering_checkbox = QCheckBox("Activer le clustering (groupes d'arbres)")
+        self.veg_clustering_checkbox.setChecked(True)
+        veg_layout.addWidget(self.veg_clustering_checkbox)
+
+        veg_group.setLayout(veg_layout)
+        veg_group.setEnabled(False)
+        layout.addWidget(veg_group)
+
+        # Store reference for enabling/disabling
+        self.veg_controls_group = veg_group
+        self.biome_controls_group = biome_group
 
         layout.addStretch()
 
@@ -551,10 +728,11 @@ class MountainProUI(QMainWindow):
     # =========== SLOTS ===========
 
     def generate_terrain(self):
-        """Lance la génération de terrain"""
-        self.log("🗻 Génération du terrain...")
+        """Lance la génération de terrain avec nouvelles features"""
+        self.log("🗻 Génération du terrain avec érosion avancée...")
 
         params = {
+            # Base parameters
             'resolution': int(self.resolution_combo.currentText()),
             'scale': self.scale_slider['slider'].value() * self.scale_slider['scale'],
             'octaves': self.octaves_slider['slider'].value(),
@@ -562,7 +740,27 @@ class MountainProUI(QMainWindow):
             'lacunarity': self.lacunarity_slider['slider'].value() * self.lacunarity_slider['scale'],
             'mountain_type': self.mountain_type_combo.currentText().lower(),
             'normal_strength': self.normal_strength_slider['slider'].value() * self.normal_strength_slider['scale'],
-            'seed': self.seed_spinbox.value()
+            'seed': self.seed_spinbox.value(),
+
+            # Preset parameters (NEW)
+            'use_preset': self.use_preset_checkbox.isChecked(),
+            'preset_name': self.preset_combo.currentText() if self.use_preset_checkbox.isChecked() else None,
+
+            # Erosion parameters (NEW)
+            'hydraulic_enabled': self.hydraulic_checkbox.isChecked(),
+            'hydraulic_iterations': self.hydraulic_iter_slider['slider'].value(),
+            'rain_amount': self.rain_slider['slider'].value() * self.rain_slider['scale'],
+            'evaporation': 0.5,  # Default
+            'thermal_enabled': self.thermal_checkbox.isChecked(),
+            'thermal_iterations': self.thermal_iter_slider['slider'].value(),
+            'talus_angle': 0.7,  # Default
+
+            # Vegetation parameters (NEW)
+            'generate_biomes': self.vegetation_enabled_checkbox.isChecked(),
+            'generate_vegetation': self.vegetation_enabled_checkbox.isChecked(),
+            'vegetation_density': self.veg_density_slider['slider'].value() * self.veg_density_slider['scale'] if self.vegetation_enabled_checkbox.isChecked() else 0.5,
+            'vegetation_spacing': self.veg_spacing_slider['slider'].value() * self.veg_spacing_slider['scale'] if self.vegetation_enabled_checkbox.isChecked() else 3.0,
+            'use_clustering': self.veg_clustering_checkbox.isChecked() if self.vegetation_enabled_checkbox.isChecked() else True
         }
 
         self.generation_thread = GenerationThread("terrain", params)
@@ -575,7 +773,7 @@ class MountainProUI(QMainWindow):
         self.progress_bar.setVisible(True)
 
     def on_terrain_generated(self, result, result_type):
-        """Callback terrain généré"""
+        """Callback terrain généré avec nouvelles features"""
         self.current_terrain = result['terrain_gen']
         self.current_heightmap = result['heightmap']
 
@@ -585,6 +783,23 @@ class MountainProUI(QMainWindow):
         self.display_preview(result['heightmap'], self.heightmap_preview)
         self.display_preview(result['normal_map'], self.normal_preview)
         self.display_preview(result['depth_map'], self.depth_preview)
+
+        # Display biome map if available
+        if result.get('biome_map') is not None:
+            self.log(f"✓ Biomes classifiés")
+
+        # Display vegetation stats if available
+        if result.get('tree_instances') is not None:
+            num_trees = len(result['tree_instances'])
+            self.log(f"✓ {num_trees} arbres placés")
+
+            # Count species
+            species_counts = {}
+            for tree in result['tree_instances']:
+                species_counts[tree.species] = species_counts.get(tree.species, 0) + 1
+
+            for species, count in species_counts.items():
+                self.log(f"  → {species}: {count} arbres")
 
         # Afficher en 3D
         self.display_3d_mesh(result['heightmap'])
@@ -648,6 +863,32 @@ class MountainProUI(QMainWindow):
         """Toggle wireframe mode"""
         # TODO
         pass
+
+    def toggle_preset_mode(self, state):
+        """Toggle preset mode ON/OFF"""
+        enabled = (state == Qt.CheckState.Checked.value)
+        self.preset_combo.setEnabled(enabled)
+
+        # Disable/enable manual controls when using preset
+        controls = [
+            self.scale_slider,
+            self.octaves_slider,
+            self.persistence_slider,
+            self.lacunarity_slider,
+            self.hydraulic_iter_slider,
+            self.rain_slider,
+            self.thermal_iter_slider
+        ]
+
+        for control in controls:
+            control['slider'].setEnabled(not enabled)
+
+    def toggle_vegetation_controls(self, state):
+        """Toggle vegetation controls ON/OFF"""
+        enabled = (state == Qt.CheckState.Checked.value)
+        self.veg_controls_group.setEnabled(enabled)
+        self.biome_controls_group.setEnabled(enabled)
+        self.biome_checkbox.setEnabled(enabled)
 
     def initialize_backend(self):
         """Initialise le backend AI"""
