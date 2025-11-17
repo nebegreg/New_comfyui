@@ -18,11 +18,22 @@ from PIL import Image
 import pyqtgraph as pg
 import pyqtgraph.opengl as gl
 
-from terrain_generator import TerrainGenerator
-from prompt_generator import MountainPromptGenerator
+# Old modules (still used for some features)
 from comfyui_integration import ComfyUIIntegration, StableDiffusionDirect
 from temporal_consistency import VideoCoherenceManager
 from video_generator import VideoGenerator
+
+# New core modules (Mountain Studio Pro v2.0)
+from core.config.preset_manager import PresetManager
+from core.terrain.heightmap_generator_v2 import HeightmapGeneratorV2  # Ultra-realistic V2
+from core.terrain.hydraulic_erosion import HydraulicErosionSystem
+from core.terrain.thermal_erosion import ThermalErosionSystem
+from core.vegetation.biome_classifier import BiomeClassifier
+from core.vegetation.vegetation_placer import VegetationPlacer
+from core.rendering.pbr_splatmap_generator import PBRSplatmapGenerator
+from core.rendering.vfx_prompt_generator import VFXPromptGenerator
+from core.export.professional_exporter import ProfessionalExporter
+from core.ai.comfyui_integration import ComfyUIClient, generate_pbr_textures, generate_landscape_image
 
 
 class GenerationThread(QThread):
@@ -48,30 +59,136 @@ class GenerationThread(QThread):
             self.error.emit(f"Erreur: {str(e)}")
 
     def generate_terrain(self):
-        self.progress.emit(10, "Génération heightmap...")
-        terrain_gen = TerrainGenerator(
-            width=self.params['resolution'],
-            height=self.params['resolution']
-        )
+        """Generate terrain using new HeightmapGenerator with advanced erosion"""
+        self.progress.emit(5, "Initialisation générateur...")
 
-        heightmap = terrain_gen.generate_heightmap(
-            scale=self.params['scale'],
-            octaves=self.params['octaves'],
-            persistence=self.params['persistence'],
-            lacunarity=self.params['lacunarity'],
-            mountain_type=self.params['mountain_type'],
-            seed=self.params['seed']
+        # Load preset if specified
+        preset = None
+        if self.params.get('use_preset') and self.params.get('preset_name'):
+            self.progress.emit(8, f"Chargement preset '{self.params['preset_name']}'...")
+            preset_mgr = PresetManager()
+            preset = preset_mgr.get_preset(self.params['preset_name'])
+
+            # Extract terrain parameters from preset
+            terrain_cfg = preset.get('terrain', {})
+            erosion_cfg = preset.get('erosion', {})
+            hydraulic_cfg = erosion_cfg.get('hydraulic', {})
+
+            # Use preset values
+            resolution = preset.get('resolution', self.params['resolution'])
+            scale = terrain_cfg.get('base_scale', 100.0)
+            octaves = terrain_cfg.get('octaves', 8)
+            persistence = terrain_cfg.get('persistence', 0.5)
+            lacunarity = terrain_cfg.get('lacunarity', 2.0)
+            seed = terrain_cfg.get('seed', 42)
+            apply_hydraulic = hydraulic_cfg.get('enabled', True)
+            apply_thermal = erosion_cfg.get('thermal', {}).get('enabled', True)
+            erosion_iters = hydraulic_cfg.get('iterations', 50) * 1000
+        else:
+            # Use UI parameters
+            resolution = self.params['resolution']
+            scale = self.params.get('scale', 100.0)
+            octaves = self.params.get('octaves', 8)
+            persistence = self.params.get('persistence', 0.5)
+            lacunarity = self.params.get('lacunarity', 2.0)
+            seed = self.params.get('seed', 42)
+            apply_hydraulic = self.params.get('hydraulic_enabled', True)
+            apply_thermal = self.params.get('thermal_enabled', True)
+            erosion_iters = self.params.get('hydraulic_iterations', 50) * 1000
+
+        # Create ULTRA-REALISTIC terrain generator V2
+        terrain_gen = HeightmapGeneratorV2(width=resolution, height=resolution)
+
+        self.progress.emit(15, "Génération heightmap ULTRA-RÉALISTE...")
+
+        # Use preset name if available, otherwise use mountain type
+        preset_name = self.params.get('preset_name') if self.params.get('use_preset') else None
+
+        heightmap = terrain_gen.generate(
+            mountain_type=self.params.get('mountain_type', 'ultra_realistic'),
+            preset=preset_name,
+            scale=1.0,  # V2 uses normalized scale
+            octaves=max(12, octaves),  # V2 needs higher octaves for quality
+            lacunarity=lacunarity,
+            gain=persistence,  # V2 uses 'gain' instead of 'persistence'
+            warp_strength=self.params.get('warp_strength', 0.5),
+            erosion_strength=0.7,
+            apply_hydraulic_erosion=apply_hydraulic,
+            apply_thermal_erosion=apply_thermal,
+            erosion_iterations=erosion_iters if not preset_name else None,  # Auto if preset
+            seed=seed
         )
 
         self.progress.emit(40, "Génération normal map...")
-        normal_map = terrain_gen.generate_normal_map(strength=self.params['normal_strength'])
+        normal_map = terrain_gen.generate_normal_map(
+            heightmap,
+            strength=self.params.get('normal_strength', 1.0)
+        )
 
-        self.progress.emit(60, "Génération depth map...")
-        depth_map = terrain_gen.generate_depth_map()
+        self.progress.emit(55, "Génération depth map...")
+        depth_map = terrain_gen.generate_depth_map(heightmap)
 
-        self.progress.emit(80, "Génération AO et roughness...")
-        ao_map = terrain_gen.generate_ambient_occlusion()
-        roughness_map = terrain_gen.generate_roughness_map()
+        self.progress.emit(65, "Génération AO...")
+        ao_map = terrain_gen.generate_ambient_occlusion(
+            heightmap,
+            samples=16,
+            radius=10
+        )
+
+        # Get vegetation parameters (from preset or UI)
+        if preset is not None:
+            veg_cfg = preset.get('vegetation', {})
+            generate_veg = veg_cfg.get('enabled', False) or self.params.get('generate_vegetation', False)
+            veg_density = veg_cfg.get('density', 0.5)
+            veg_spacing = veg_cfg.get('min_spacing', 3.0)
+            veg_clustering = veg_cfg.get('use_clustering', True)
+        else:
+            generate_veg = self.params.get('generate_vegetation', False)
+            veg_density = self.params.get('vegetation_density', 0.5)
+            veg_spacing = self.params.get('vegetation_spacing', 3.0)
+            veg_clustering = self.params.get('use_clustering', True)
+
+        # Biome classification
+        biome_map = None
+        if generate_veg or self.params.get('generate_biomes', False):
+            self.progress.emit(75, "Classification biomes...")
+            biome_classifier = BiomeClassifier(
+                width=resolution,
+                height=resolution
+            )
+            biome_map = biome_classifier.classify(heightmap)
+
+        # Vegetation placement
+        tree_instances = None
+        density_map = None
+        if generate_veg and biome_map is not None:
+            self.progress.emit(85, "Placement végétation...")
+            placer = VegetationPlacer(
+                resolution,
+                resolution,
+                heightmap,
+                biome_map
+            )
+            tree_instances = placer.place_vegetation(
+                density=veg_density,
+                min_spacing=veg_spacing,
+                use_clustering=veg_clustering
+            )
+            density_map = placer.generate_density_map()
+
+        # PBR Splatmap generation
+        splatmaps = None
+        if self.params.get('generate_splatmaps', True):  # Generate by default
+            self.progress.emit(92, "Génération PBR splatmaps...")
+            splatmap_gen = PBRSplatmapGenerator(resolution, resolution)
+
+            splatmap1, splatmap2 = splatmap_gen.generate_splatmap(
+                heightmap,
+                normal_map,
+                biome_map if biome_map is not None else None
+            )
+
+            splatmaps = [splatmap1, splatmap2]
 
         self.progress.emit(100, "Terminé!")
 
@@ -80,7 +197,10 @@ class GenerationThread(QThread):
             'normal_map': normal_map,
             'depth_map': depth_map,
             'ao_map': ao_map,
-            'roughness_map': roughness_map,
+            'biome_map': biome_map,
+            'tree_instances': tree_instances,
+            'density_map': density_map,
+            'splatmaps': splatmaps,
             'terrain_gen': terrain_gen
         }
 
@@ -107,11 +227,20 @@ class MountainProUI(QMainWindow):
         self.setWindowTitle("Mountain Studio Pro - Outil Professionnel pour Graphistes")
         self.setGeometry(100, 100, 1600, 900)
 
-        # État
+        # État - Terrain data
         self.current_terrain = None
         self.current_heightmap = None
+        self.current_normal_map = None
+        self.current_depth_map = None
+        self.current_ao_map = None
+        self.current_biome_map = None
+        self.current_tree_instances = None
+        self.current_density_map = None
+        self.current_splatmaps = None
+        self.current_vfx_prompt = None
         self.current_texture = None
         self.generation_thread = None
+        self.generation_metadata = {}
 
         # Backends
         self.comfyui = None
@@ -162,15 +291,19 @@ class MountainProUI(QMainWindow):
         terrain_tab = self.create_terrain_controls()
         tabs.addTab(terrain_tab, "🗻 Terrain")
 
-        # Tab 2: Texture AI
+        # Tab 2: Vegetation (NEW)
+        vegetation_tab = self.create_vegetation_controls()
+        tabs.addTab(vegetation_tab, "🌲 Végétation")
+
+        # Tab 3: Texture AI
         texture_tab = self.create_texture_controls()
         tabs.addTab(texture_tab, "🎨 Texture AI")
 
-        # Tab 3: Caméra & Rendu
+        # Tab 4: Caméra & Rendu
         camera_tab = self.create_camera_controls()
         tabs.addTab(camera_tab, "🎥 Caméra")
 
-        # Tab 4: Export
+        # Tab 5: Export
         export_tab = self.create_export_controls()
         tabs.addTab(export_tab, "💾 Export")
 
@@ -248,11 +381,118 @@ class MountainProUI(QMainWindow):
         params_group.setLayout(params_layout)
         layout.addWidget(params_group)
 
+        # Presets (NEW)
+        preset_group = QGroupBox("⚡ Presets Professionnels")
+        preset_layout = QVBoxLayout()
+
+        self.use_preset_checkbox = QCheckBox("Utiliser un preset")
+        self.use_preset_checkbox.stateChanged.connect(self.toggle_preset_mode)
+        preset_layout.addWidget(self.use_preset_checkbox)
+
+        self.preset_combo = QComboBox()
+        preset_mgr = PresetManager()
+        for preset_name in preset_mgr.list_presets():
+            self.preset_combo.addItem(preset_name)
+        self.preset_combo.setEnabled(False)
+        preset_layout.addWidget(self.preset_combo)
+
+        preset_group.setLayout(preset_layout)
+        layout.addWidget(preset_group)
+
+        # Érosion avancée (NEW)
+        erosion_group = QGroupBox("🌊 Érosion Avancée")
+        erosion_layout = QVBoxLayout()
+
+        # Hydraulic erosion
+        self.hydraulic_checkbox = QCheckBox("Érosion Hydraulique")
+        self.hydraulic_checkbox.setChecked(True)
+        erosion_layout.addWidget(self.hydraulic_checkbox)
+
+        erosion_layout.addWidget(QLabel("Itérations hydrauliques:"))
+        self.hydraulic_iter_slider = self.create_slider_with_value(10, 200, 50)
+        erosion_layout.addLayout(self.hydraulic_iter_slider['layout'])
+
+        erosion_layout.addWidget(QLabel("Quantité pluie:"))
+        self.rain_slider = self.create_slider_with_value(1, 20, 10, scale=0.001)
+        erosion_layout.addLayout(self.rain_slider['layout'])
+
+        # Thermal erosion
+        self.thermal_checkbox = QCheckBox("Érosion Thermique")
+        self.thermal_checkbox.setChecked(True)
+        erosion_layout.addWidget(self.thermal_checkbox)
+
+        erosion_layout.addWidget(QLabel("Itérations thermiques:"))
+        self.thermal_iter_slider = self.create_slider_with_value(10, 100, 30)
+        erosion_layout.addLayout(self.thermal_iter_slider['layout'])
+
+        erosion_group.setLayout(erosion_layout)
+        layout.addWidget(erosion_group)
+
         # Bouton génération
-        self.generate_terrain_btn = QPushButton("🗻 Générer Terrain 3D")
+        self.generate_terrain_btn = QPushButton("🗻 Générer Terrain 3D (avec Érosion)")
         self.generate_terrain_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; padding: 10px; font-weight: bold; }")
         self.generate_terrain_btn.clicked.connect(self.generate_terrain)
         layout.addWidget(self.generate_terrain_btn)
+
+        layout.addStretch()
+
+        return widget
+
+    def create_vegetation_controls(self):
+        """Contrôles de végétation procédurale (NEW)"""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        # Enable vegetation
+        self.vegetation_enabled_checkbox = QCheckBox("Activer la génération de végétation")
+        self.vegetation_enabled_checkbox.setChecked(False)
+        self.vegetation_enabled_checkbox.stateChanged.connect(self.toggle_vegetation_controls)
+        layout.addWidget(self.vegetation_enabled_checkbox)
+
+        # Biome classification
+        biome_group = QGroupBox("🏔️ Classification Biomes")
+        biome_layout = QVBoxLayout()
+
+        self.biome_checkbox = QCheckBox("Classifier les biomes automatiquement")
+        self.biome_checkbox.setChecked(True)
+        self.biome_checkbox.setEnabled(False)
+        biome_layout.addWidget(self.biome_checkbox)
+
+        biome_info = QLabel("Les biomes déterminent le type de végétation:\n" +
+                           "• Alpine Tundra (haute altitude)\n" +
+                           "• Subalpine (pins épars)\n" +
+                           "• Montane Forest (forêt dense)\n" +
+                           "• Valley Floor (vallées)\n" +
+                           "• Water (lacs)")
+        biome_info.setStyleSheet("color: #888; font-size: 9pt;")
+        biome_layout.addWidget(biome_info)
+
+        biome_group.setLayout(biome_layout)
+        layout.addWidget(biome_group)
+
+        # Vegetation placement
+        veg_group = QGroupBox("🌲 Placement Végétation")
+        veg_layout = QVBoxLayout()
+
+        veg_layout.addWidget(QLabel("Densité globale:"))
+        self.veg_density_slider = self.create_slider_with_value(10, 100, 50, scale=0.01)
+        veg_layout.addLayout(self.veg_density_slider['layout'])
+
+        veg_layout.addWidget(QLabel("Espacement minimum (m):"))
+        self.veg_spacing_slider = self.create_slider_with_value(1, 10, 3, scale=0.1)
+        veg_layout.addLayout(self.veg_spacing_slider['layout'])
+
+        self.veg_clustering_checkbox = QCheckBox("Activer le clustering (groupes d'arbres)")
+        self.veg_clustering_checkbox.setChecked(True)
+        veg_layout.addWidget(self.veg_clustering_checkbox)
+
+        veg_group.setLayout(veg_layout)
+        veg_group.setEnabled(False)
+        layout.addWidget(veg_group)
+
+        # Store reference for enabling/disabling
+        self.veg_controls_group = veg_group
+        self.biome_controls_group = biome_group
 
         layout.addStretch()
 
@@ -448,6 +688,11 @@ class MountainProUI(QMainWindow):
         self.export_mesh_btn.clicked.connect(self.export_mesh)
         layout.addWidget(self.export_mesh_btn)
 
+        self.export_flame_btn = QPushButton("🔥 Export pour Autodesk Flame (OBJ+MTL+Textures)")
+        self.export_flame_btn.setStyleSheet("QPushButton { background-color: #E91E63; color: white; padding: 10px; font-weight: bold; }")
+        self.export_flame_btn.clicked.connect(self.export_for_flame)
+        layout.addWidget(self.export_flame_btn)
+
         layout.addStretch()
 
         # Log
@@ -551,10 +796,11 @@ class MountainProUI(QMainWindow):
     # =========== SLOTS ===========
 
     def generate_terrain(self):
-        """Lance la génération de terrain"""
-        self.log("🗻 Génération du terrain...")
+        """Lance la génération de terrain avec nouvelles features"""
+        self.log("🗻 Génération du terrain avec érosion avancée...")
 
         params = {
+            # Base parameters
             'resolution': int(self.resolution_combo.currentText()),
             'scale': self.scale_slider['slider'].value() * self.scale_slider['scale'],
             'octaves': self.octaves_slider['slider'].value(),
@@ -562,7 +808,27 @@ class MountainProUI(QMainWindow):
             'lacunarity': self.lacunarity_slider['slider'].value() * self.lacunarity_slider['scale'],
             'mountain_type': self.mountain_type_combo.currentText().lower(),
             'normal_strength': self.normal_strength_slider['slider'].value() * self.normal_strength_slider['scale'],
-            'seed': self.seed_spinbox.value()
+            'seed': self.seed_spinbox.value(),
+
+            # Preset parameters (NEW)
+            'use_preset': self.use_preset_checkbox.isChecked(),
+            'preset_name': self.preset_combo.currentText() if self.use_preset_checkbox.isChecked() else None,
+
+            # Erosion parameters (NEW)
+            'hydraulic_enabled': self.hydraulic_checkbox.isChecked(),
+            'hydraulic_iterations': self.hydraulic_iter_slider['slider'].value(),
+            'rain_amount': self.rain_slider['slider'].value() * self.rain_slider['scale'],
+            'evaporation': 0.5,  # Default
+            'thermal_enabled': self.thermal_checkbox.isChecked(),
+            'thermal_iterations': self.thermal_iter_slider['slider'].value(),
+            'talus_angle': 0.7,  # Default
+
+            # Vegetation parameters (NEW)
+            'generate_biomes': self.vegetation_enabled_checkbox.isChecked(),
+            'generate_vegetation': self.vegetation_enabled_checkbox.isChecked(),
+            'vegetation_density': self.veg_density_slider['slider'].value() * self.veg_density_slider['scale'] if self.vegetation_enabled_checkbox.isChecked() else 0.5,
+            'vegetation_spacing': self.veg_spacing_slider['slider'].value() * self.veg_spacing_slider['scale'] if self.vegetation_enabled_checkbox.isChecked() else 3.0,
+            'use_clustering': self.veg_clustering_checkbox.isChecked() if self.vegetation_enabled_checkbox.isChecked() else True
         }
 
         self.generation_thread = GenerationThread("terrain", params)
@@ -575,9 +841,17 @@ class MountainProUI(QMainWindow):
         self.progress_bar.setVisible(True)
 
     def on_terrain_generated(self, result, result_type):
-        """Callback terrain généré"""
+        """Callback terrain généré avec nouvelles features"""
+        # Store all results
         self.current_terrain = result['terrain_gen']
         self.current_heightmap = result['heightmap']
+        self.current_normal_map = result.get('normal_map')
+        self.current_depth_map = result.get('depth_map')
+        self.current_ao_map = result.get('ao_map')
+        self.current_biome_map = result.get('biome_map')
+        self.current_tree_instances = result.get('tree_instances')
+        self.current_density_map = result.get('density_map')
+        self.current_splatmaps = result.get('splatmaps')
 
         self.log("✓ Terrain généré avec succès!")
 
@@ -585,6 +859,23 @@ class MountainProUI(QMainWindow):
         self.display_preview(result['heightmap'], self.heightmap_preview)
         self.display_preview(result['normal_map'], self.normal_preview)
         self.display_preview(result['depth_map'], self.depth_preview)
+
+        # Display biome map if available
+        if result.get('biome_map') is not None:
+            self.log(f"✓ Biomes classifiés")
+
+        # Display vegetation stats if available
+        if result.get('tree_instances') is not None:
+            num_trees = len(result['tree_instances'])
+            self.log(f"✓ {num_trees} arbres placés")
+
+            # Count species
+            species_counts = {}
+            for tree in result['tree_instances']:
+                species_counts[tree.species] = species_counts.get(tree.species, 0) + 1
+
+            for species, count in species_counts.items():
+                self.log(f"  → {species}: {count} arbres")
 
         # Afficher en 3D
         self.display_3d_mesh(result['heightmap'])
@@ -649,6 +940,32 @@ class MountainProUI(QMainWindow):
         # TODO
         pass
 
+    def toggle_preset_mode(self, state):
+        """Toggle preset mode ON/OFF"""
+        enabled = (state == Qt.CheckState.Checked.value)
+        self.preset_combo.setEnabled(enabled)
+
+        # Disable/enable manual controls when using preset
+        controls = [
+            self.scale_slider,
+            self.octaves_slider,
+            self.persistence_slider,
+            self.lacunarity_slider,
+            self.hydraulic_iter_slider,
+            self.rain_slider,
+            self.thermal_iter_slider
+        ]
+
+        for control in controls:
+            control['slider'].setEnabled(not enabled)
+
+    def toggle_vegetation_controls(self, state):
+        """Toggle vegetation controls ON/OFF"""
+        enabled = (state == Qt.CheckState.Checked.value)
+        self.veg_controls_group.setEnabled(enabled)
+        self.biome_controls_group.setEnabled(enabled)
+        self.biome_checkbox.setEnabled(enabled)
+
     def initialize_backend(self):
         """Initialise le backend AI"""
         backend = self.backend_combo.currentText()
@@ -691,9 +1008,120 @@ class MountainProUI(QMainWindow):
         self.log("✨ Prompt auto-généré")
 
     def generate_texture(self):
-        """Génère une texture AI"""
-        self.log("🎨 Génération texture AI...")
-        QMessageBox.information(self, "Info", "Fonction en développement")
+        """Génère une texture AI ultra-réaliste avec ComfyUI"""
+        if self.current_heightmap is None:
+            QMessageBox.warning(self, "Attention", "Générez d'abord un terrain!")
+            return
+
+        self.log("🎨 Génération texture AI avec ComfyUI...")
+
+        # Generate VFX prompt
+        vfx_gen = VFXPromptGenerator()
+
+        # Analyze terrain characteristics
+        elevation_stats = {
+            'mean': float(np.mean(self.current_heightmap)),
+            'std': float(np.std(self.current_heightmap)),
+            'min': float(np.min(self.current_heightmap)),
+            'max': float(np.max(self.current_heightmap))
+        }
+
+        # Determine terrain style based on characteristics
+        if elevation_stats['std'] > 0.3:
+            style = "dramatic"
+        elif elevation_stats['mean'] > 0.6:
+            style = "epic"
+        else:
+            style = "cinematic"
+
+        # Generate prompt
+        prompt_result = vfx_gen.generate_prompt(
+            terrain_type="mountain",
+            style=style,
+            lighting_time="golden_hour",
+            weather="clear",
+            camera_angle="wide",
+            additional_elements=["snow_caps", "rock_formations"] if elevation_stats['max'] > 0.7 else ["vegetation", "valleys"]
+        )
+
+        # Store prompt
+        self.current_vfx_prompt = prompt_result
+
+        # Try to generate AI texture with ComfyUI
+        self.log("🤖 Connexion à ComfyUI pour génération AI...")
+
+        try:
+            # Generate landscape image with AI
+            landscape = generate_landscape_image(
+                self.current_heightmap,
+                prompt=prompt_result['positive'],
+                style=style,
+                server_address="127.0.0.1:8188",
+                seed=-1
+            )
+
+            if landscape is not None:
+                self.log("✓ Texture AI générée avec succès!")
+
+                # Display result
+                dialog = QMessageBox(self)
+                dialog.setWindowTitle("Texture AI Générée")
+                dialog.setText("Texture ultra-réaliste générée avec ComfyUI!")
+                dialog.setInformativeText("La texture a été générée en utilisant l'IA. Voulez-vous la sauvegarder?")
+                dialog.setStandardButtons(QMessageBox.Save | QMessageBox.Close)
+
+                if dialog.exec() == QMessageBox.Save:
+                    filepath, _ = QFileDialog.getSaveFileName(
+                        self,
+                        "Sauvegarder Texture AI",
+                        "ai_texture.png",
+                        "PNG Images (*.png);;All Files (*)"
+                    )
+                    if filepath:
+                        Image.fromarray(landscape).save(filepath)
+                        self.log(f"✓ Texture AI sauvegardée: {filepath}")
+
+            else:
+                raise Exception("ComfyUI not available")
+
+        except Exception as e:
+            self.log(f"⚠ ComfyUI non disponible ({e}), affichage du prompt...")
+
+            # Fallback: show prompt for manual use
+            prompt_text = f"""PROMPT POSITIF:
+{prompt_result['positive']}
+
+PROMPT NÉGATIF:
+{prompt_result['negative']}
+
+PARAMÈTRES RECOMMANDÉS:
+{prompt_result['metadata']['recommended_model']} - {prompt_result['metadata']['steps']} steps, CFG {prompt_result['metadata']['cfg_scale']}
+
+NOTE: ComfyUI n'est pas disponible. Lancez ComfyUI sur http://127.0.0.1:8188
+pour la génération automatique, ou utilisez ce prompt manuellement.
+"""
+
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Prompt VFX (ComfyUI non disponible)")
+            dialog.setText("ComfyUI non détecté - Prompt généré pour usage manuel")
+            dialog.setDetailedText(prompt_text)
+            dialog.setStandardButtons(QMessageBox.Ok | QMessageBox.Save)
+
+            result = dialog.exec()
+
+            if result == QMessageBox.Save:
+                filepath, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Sauvegarder Prompt",
+                    "vfx_prompt.txt",
+                    "Text Files (*.txt);;All Files (*)"
+                )
+                if filepath:
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(prompt_text)
+                    self.log(f"✓ Prompt sauvegardé: {filepath}")
+
+        self.log("✓ Génération texture terminée")
 
     def generate_video(self):
         """Génère une vidéo cohérente"""
@@ -701,29 +1129,153 @@ class MountainProUI(QMainWindow):
         QMessageBox.information(self, "Info", "Fonction en développement")
 
     def export_all_maps(self):
-        """Exporte toutes les maps"""
-        if self.current_terrain is None:
+        """Exporte toutes les maps avec ProfessionalExporter"""
+        if self.current_heightmap is None:
             QMessageBox.warning(self, "Attention", "Générez d'abord un terrain!")
             return
 
         folder = QFileDialog.getExistingDirectory(self, "Choisir dossier d'export")
         if folder:
-            self.current_terrain.export_all_maps(folder, prefix="mountain_pro")
-            self.log(f"✓ Maps exportées vers: {folder}")
-            QMessageBox.information(self, "Succès", f"Maps exportées vers:\n{folder}")
+            self.log("📦 Export en cours...")
+
+            # Create exporter
+            exporter = ProfessionalExporter(folder)
+
+            # Export complete package
+            exported_files = exporter.export_complete_package(
+                heightmap=self.current_heightmap,
+                normal_map=self.current_normal_map,
+                depth_map=self.current_depth_map,
+                ao_map=self.current_ao_map,
+                splatmaps=self.current_splatmaps,
+                tree_instances=self.current_tree_instances,
+                vfx_prompt=self.current_vfx_prompt,
+                metadata=self.generation_metadata,
+                export_mesh=True,
+                mesh_subsample=2  # Subsample for performance
+            )
+
+            num_files = len(exported_files)
+            self.log(f"✓ {num_files} fichiers exportés vers: {folder}")
+
+            # Show summary
+            file_list = "\n".join([f"• {Path(f).name}" for f in exported_files.values()])
+            QMessageBox.information(
+                self,
+                "Export Réussi",
+                f"Export terminé: {num_files} fichiers\n\n{file_list}"
+            )
 
     def export_mesh(self):
-        """Exporte le mesh 3D"""
-        if self.current_terrain is None:
+        """Exporte le mesh 3D en OBJ"""
+        if self.current_heightmap is None:
             QMessageBox.warning(self, "Attention", "Générez d'abord un terrain!")
             return
 
-        filepath, _ = QFileDialog.getSaveFileName(self, "Exporter Mesh 3D", "", "OBJ Files (*.obj)")
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exporter Mesh 3D",
+            "",
+            "OBJ Files (*.obj);;All Files (*)"
+        )
+
         if filepath:
-            vertices, faces, normals = self.current_terrain.get_3d_mesh_data()
-            self.export_obj(filepath, vertices, faces)
-            self.log(f"✓ Mesh exporté: {filepath}")
-            QMessageBox.information(self, "Succès", f"Mesh exporté:\n{filepath}")
+            self.log("🎨 Export mesh 3D en cours...")
+
+            # Use temporary folder for export
+            import tempfile
+            temp_dir = tempfile.mkdtemp()
+
+            exporter = ProfessionalExporter(temp_dir)
+            exported_obj = exporter.export_mesh_obj(
+                self.current_heightmap,
+                "terrain.obj",
+                scale_x=1.0,
+                scale_y=50.0,  # Amplify height
+                scale_z=1.0,
+                subsample=2  # For performance
+            )
+
+            # Move to desired location
+            import shutil
+            shutil.move(exported_obj, filepath)
+            shutil.rmtree(temp_dir)
+
+            self.log(f"✓ Mesh 3D exporté: {filepath}")
+            QMessageBox.information(self, "Succès", f"Mesh 3D exporté:\n{filepath}")
+
+    def export_for_flame(self):
+        """Export complet pour Autodesk Flame (OBJ+MTL+Textures)"""
+        if self.current_heightmap is None:
+            QMessageBox.warning(self, "Attention", "Générez d'abord un terrain!")
+            return
+
+        folder = QFileDialog.getExistingDirectory(self, "Choisir dossier d'export Flame")
+        if folder:
+            self.log("🔥 Export pour Autodesk Flame en cours...")
+
+            try:
+                # Create exporter
+                exporter = ProfessionalExporter(folder)
+
+                # Export using dedicated Flame method
+                exported_files = exporter.export_for_autodesk_flame(
+                    heightmap=self.current_heightmap,
+                    normal_map=self.current_normal_map,
+                    depth_map=self.current_depth_map,
+                    ao_map=self.current_ao_map,
+                    diffuse_map=None,  # Will be auto-generated from heightmap
+                    roughness_map=None,
+                    splatmaps=self.current_splatmaps,
+                    tree_instances=self.current_tree_instances,
+                    mesh_subsample=2,
+                    scale_y=50.0
+                )
+
+                num_files = len(exported_files)
+                self.log(f"✓ Export Flame réussi: {num_files} fichiers")
+
+                # Build file list for display
+                file_list = []
+                file_list.append("📁 STRUCTURE EXPORTÉE:")
+                file_list.append(f"  • terrain.obj")
+                file_list.append(f"  • terrain.mtl")
+                file_list.append(f"  📂 textures/")
+
+                if exported_files.get('diffuse'):
+                    file_list.append(f"    • diffuse.png")
+                if exported_files.get('normal'):
+                    file_list.append(f"    • normal.png")
+                if exported_files.get('ao'):
+                    file_list.append(f"    • ao.png")
+                if exported_files.get('displacement'):
+                    file_list.append(f"    • height.png (displacement)")
+                if exported_files.get('depth'):
+                    file_list.append(f"    • depth.png")
+
+                splatmap_count = sum(1 for k in exported_files.keys() if k.startswith('splatmap'))
+                if splatmap_count > 0:
+                    file_list.append(f"    • {splatmap_count} splatmaps PBR")
+
+                if exported_files.get('vegetation'):
+                    file_list.append(f"  • vegetation.json")
+
+                file_list.append(f"  • README_FLAME.txt")
+
+                summary = "\n".join(file_list)
+
+                QMessageBox.information(
+                    self,
+                    "Export Flame Réussi",
+                    f"Export terminé avec succès!\n\n{summary}\n\nLocalisation: {folder}"
+                )
+
+                self.log(f"📦 Tous les fichiers sont dans: {folder}")
+
+            except Exception as e:
+                error_msg = f"Erreur lors de l'export Flame: {str(e)}"
+                self.log(f"❌ {error_msg}")
+                QMessageBox.critical(self, "Erreur Export", error_msg)
 
     def export_obj(self, filepath, vertices, faces):
         """Exporte en format OBJ"""

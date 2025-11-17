@@ -1,0 +1,11 @@
+=== POSITIVE PROMPT ===
+rugged rocky mountain, exposed rock faces, dramatic cliff formations, wild terrain, snow-capped peaks, pristine white snow, glacial features, mountain lake, crystal clear water, natural reflections, summer season, lush vegetation, clear skies, vibrant colors, crystal clear atmosphere, perfect visibility, sharp details, vibrant colors, clean air, mountain valley environment, lush vegetation, diverse flora, ground level perspective, human eye view, intimate scale, rule of thirds composition, balanced framing, professional layout, golden hour lighting, dramatic orange and red sky, long shadows, warm color temperature, magical atmosphere, sun rays through clouds, 35mm lens, f/11 aperture, wide-angle lens, expansive field of view, professional DSLR camera, full-frame sensor, perfect focus, optimal exposure, National Geographic photography style, editorial quality, perfect storytelling, award-winning composition, hypersharp, gigapixel, 16k resolution, 8k textures, Unreal Engine 5, UE5 nanite, UE5 lumen, RTX ray tracing, path tracing, global illumination, DSLR photography, professional cinematography, National Geographic style, landscape photography masterpiece, physically-based rendering, PBR materials, accurate color science, high dynamic range
+
+=== NEGATIVE PROMPT ===
+blurry, out of focus, low quality, low resolution, pixelated, jpeg artifacts, compression artifacts, noise, grain, distorted, deformed, unrealistic, fake, artificial, rendered look, oversaturated, undersaturated, wrong colors, bad lighting, flat lighting, overexposed, underexposed, amateur, snapshot, phone camera, flat terrain, unnaturally smooth, repetitive patterns, tiling texture, obvious repetition, symmetrical, floating objects, disconnected elements, cartoon, anime, illustration, painting, drawing, text, watermark, signature, logo, distorted perspective, wrong proportions, warped, stretched, squashed, deformed geometry
+
+=== METADATA ===
+terrain_type: rocky
+time_of_day: sunset
+weather: clear
+quality_level: vfx

@@ -1,0 +1,162 @@
+{
+  "snow": {
+    "id": 0,
+    "name": "snow",
+    "description": "Fresh snow, high altitude, pristine white",
+    "base_color_rgb": [
+      250,
+      250,
+      255
+    ],
+    "roughness": 0.2,
+    "metallic": 0.0,
+    "altitude_range": [
+      0.7,
+      1.0
+    ],
+    "slope_range": [
+      0.0,
+      0.6
+    ]
+  },
+  "rock_cliff": {
+    "id": 1,
+    "name": "rock_cliff",
+    "description": "Exposed rock cliff faces, steep terrain",
+    "base_color_rgb": [
+      120,
+      115,
+      110
+    ],
+    "roughness": 0.7,
+    "metallic": 0.0,
+    "altitude_range": [
+      0.0,
+      1.0
+    ],
+    "slope_range": [
+      0.5,
+      1.5
+    ]
+  },
+  "rock_ground": {
+    "id": 2,
+    "name": "rock_ground",
+    "description": "Rocky ground, alpine zone, scattered rocks",
+    "base_color_rgb": [
+      130,
+      120,
+      105
+    ],
+    "roughness": 0.8,
+    "metallic": 0.0,
+    "altitude_range": [
+      0.5,
+      0.85
+    ],
+    "slope_range": [
+      0.2,
+      0.7
+    ]
+  },
+  "alpine_grass": {
+    "id": 3,
+    "name": "alpine_grass",
+    "description": "Alpine grass, high altitude meadows",
+    "base_color_rgb": [
+      140,
+      155,
+      110
+    ],
+    "roughness": 0.9,
+    "metallic": 0.0,
+    "altitude_range": [
+      0.5,
+      0.75
+    ],
+    "slope_range": [
+      0.0,
+      0.4
+    ]
+  },
+  "forest_grass": {
+    "id": 4,
+    "name": "forest_grass",
+    "description": "Lush forest floor grass, rich soil",
+    "base_color_rgb": [
+      90,
+      120,
+      70
+    ],
+    "roughness": 0.95,
+    "metallic": 0.0,
+    "altitude_range": [
+      0.2,
+      0.6
+    ],
+    "slope_range": [
+      0.0,
+      0.35
+    ]
+  },
+  "dirt": {
+    "id": 5,
+    "name": "dirt",
+    "description": "Exposed dirt and soil, transition zones",
+    "base_color_rgb": [
+      100,
+      80,
+      60
+    ],
+    "roughness": 0.85,
+    "metallic": 0.0,
+    "altitude_range": [
+      0.0,
+      0.5
+    ],
+    "slope_range": [
+      0.0,
+      0.45
+    ]
+  },
+  "moss_wet": {
+    "id": 6,
+    "name": "moss_wet",
+    "description": "Wet moss on north-facing rocks, humid areas",
+    "base_color_rgb": [
+      60,
+      90,
+      50
+    ],
+    "roughness": 0.8,
+    "metallic": 0.0,
+    "altitude_range": [
+      0.0,
+      0.65
+    ],
+    "slope_range": [
+      0.15,
+      0.65
+    ]
+  },
+  "scree": {
+    "id": 7,
+    "name": "scree",
+    "description": "Scree slopes, loose rocks, debris",
+    "base_color_rgb": [
+      115,
+      110,
+      100
+    ],
+    "roughness": 0.75,
+    "metallic": 0.0,
+    "altitude_range": [
+      0.4,
+      0.8
+    ],
+    "slope_range": [
+      0.3,
+      0.7
+    ]
+  }
+}

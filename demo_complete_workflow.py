@@ -226,7 +226,7 @@ def demo_quick(resolution=1024):
 
     # Vegetation instances
     if len(trees) > 0:
-        placer.export_for_blender(trees, f"{output_dir}/trees_blender.json")
+        placer.export_instances(f"{output_dir}/vegetation_instances.json")
 
     # Prompt
     with open(f"{output_dir}/prompt.txt", 'w', encoding='utf-8') as f:
@@ -367,7 +367,7 @@ def demo_preset_vfx():
     splatmap_gen.export_material_info(f"{output_dir}/materials.json")
 
     if len(trees) > 0:
-        placer.export_for_blender(trees, f"{output_dir}/trees_instances_4k.json")
+        placer.export_instances(f"{output_dir}/vegetation_instances_4k.json")
 
     density_img = (density_map * 255).astype(np.uint8)
     Image.fromarray(density_img).save(f"{output_dir}/vegetation_density_4k.png")
