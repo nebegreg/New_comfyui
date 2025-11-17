@@ -234,7 +234,7 @@ def test_vegetation(terrain_result, quick=False):
 
         density = 0.3 if quick else 0.5
 
-        placer = VegetationPlacer(heightmap, biome_map, size, size)
+        placer = VegetationPlacer(size, size, heightmap, biome_map)
         tree_instances = placer.place_vegetation(
             density=density,
             min_spacing=3.0,
@@ -247,17 +247,20 @@ def test_vegetation(terrain_result, quick=False):
         print_success(f"Placé {len(tree_instances)} arbres en {time_place:.2f}s")
 
         # Stats espèces
-        species_counts = {}
-        for tree in tree_instances:
-            species_counts[tree.species] = species_counts.get(tree.species, 0) + 1
+        if len(tree_instances) > 0:
+            species_counts = {}
+            for tree in tree_instances:
+                species_counts[tree.species] = species_counts.get(tree.species, 0) + 1
 
-        for species, count in species_counts.items():
-            percentage = (count / len(tree_instances)) * 100
-            print_info(f"  {species}: {count} arbres ({percentage:.1f}%)")
+            for species, count in species_counts.items():
+                percentage = (count / len(tree_instances)) * 100
+                print_info(f"  {species}: {count} arbres ({percentage:.1f}%)")
+        else:
+            print_warning("Aucun arbre placé")
 
         # Test 4: Density map
         print_info("Test 4: Génération density map...")
-        density_map = placer.generate_density_map(tree_instances, radius=10.0)
+        density_map = placer.generate_density_map()
         print_success(f"Density map: {density_map.shape}, max={density_map.max():.2f}")
 
         return {
