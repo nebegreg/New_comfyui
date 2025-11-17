@@ -170,7 +170,7 @@ class GenerationThread(QThread):
             self.progress.emit(92, "Génération PBR splatmaps...")
             splatmap_gen = PBRSplatmapGenerator(resolution, resolution)
 
-            splatmap1, splatmap2 = splatmap_gen.generate_splatmaps(
+            splatmap1, splatmap2 = splatmap_gen.generate_splatmap(
                 heightmap,
                 normal_map,
                 biome_map if biome_map is not None else None
