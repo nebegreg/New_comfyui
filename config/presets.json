@@ -1,0 +1,398 @@
+{
+  "quick_preview": {
+    "name": "Quick Preview",
+    "description": "Aper\u00e7u rapide pour tests (512x512, peu d'\u00e9rosion)",
+    "resolution": 512,
+    "terrain": {
+      "base_scale": 80.0,
+      "octaves": 6,
+      "persistence": 0.5,
+      "lacunarity": 2.0,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 20,
+        "rain_amount": 0.008,
+        "evaporation": 0.5,
+        "capacity": 0.01,
+        "deposition": 0.1,
+        "erosion": 0.3
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 10,
+        "talus_angle": 0.7
+      }
+    },
+    "vegetation": {
+      "enabled": false
+    }
+  },
+  "balanced_quality": {
+    "name": "Balanced Quality",
+    "description": "\u00c9quilibre qualit\u00e9/vitesse (1024x1024)",
+    "resolution": 1024,
+    "terrain": {
+      "base_scale": 100.0,
+      "octaves": 8,
+      "persistence": 0.5,
+      "lacunarity": 2.0,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 50,
+        "rain_amount": 0.01,
+        "evaporation": 0.5,
+        "capacity": 0.01,
+        "deposition": 0.1,
+        "erosion": 0.3
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 30,
+        "talus_angle": 0.7
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.5,
+      "min_spacing": 3.0,
+      "use_clustering": true
+    }
+  },
+  "high_detail_4k": {
+    "name": "High Detail 4K",
+    "description": "Haute qualit\u00e9 pour production (4096x4096)",
+    "resolution": 4096,
+    "terrain": {
+      "base_scale": 150.0,
+      "octaves": 10,
+      "persistence": 0.55,
+      "lacunarity": 2.1,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 100,
+        "rain_amount": 0.012,
+        "evaporation": 0.5,
+        "capacity": 0.01,
+        "deposition": 0.1,
+        "erosion": 0.3
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 50,
+        "talus_angle": 0.65
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.6,
+      "min_spacing": 2.5,
+      "use_clustering": true
+    }
+  },
+  "vfx_epic_mountain": {
+    "name": "VFX Epic Mountain",
+    "description": "Montagne \u00e9pique pour VFX (pics dramatiques, \u00e9rosion forte)",
+    "resolution": 2048,
+    "terrain": {
+      "base_scale": 120.0,
+      "octaves": 10,
+      "persistence": 0.6,
+      "lacunarity": 2.2,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 80,
+        "rain_amount": 0.015,
+        "evaporation": 0.4,
+        "capacity": 0.012,
+        "deposition": 0.08,
+        "erosion": 0.35
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 40,
+        "talus_angle": 0.6
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.4,
+      "min_spacing": 3.5,
+      "use_clustering": true
+    }
+  },
+  "vfx_gentle_hills": {
+    "name": "VFX Gentle Hills",
+    "description": "Collines douces pour VFX (paysages paisibles)",
+    "resolution": 2048,
+    "terrain": {
+      "base_scale": 200.0,
+      "octaves": 6,
+      "persistence": 0.45,
+      "lacunarity": 1.8,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 60,
+        "rain_amount": 0.012,
+        "evaporation": 0.6,
+        "capacity": 0.01,
+        "deposition": 0.12,
+        "erosion": 0.25
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 25,
+        "talus_angle": 0.75
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.7,
+      "min_spacing": 2.0,
+      "use_clustering": true
+    }
+  },
+  "vfx_volcanic": {
+    "name": "VFX Volcanic",
+    "description": "Terrain volcanique (falaises abruptes, peu de v\u00e9g\u00e9tation)",
+    "resolution": 2048,
+    "terrain": {
+      "base_scale": 90.0,
+      "octaves": 9,
+      "persistence": 0.65,
+      "lacunarity": 2.5,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 40,
+        "rain_amount": 0.008,
+        "evaporation": 0.7,
+        "capacity": 0.008,
+        "deposition": 0.15,
+        "erosion": 0.2
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 60,
+        "talus_angle": 0.5
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.2,
+      "min_spacing": 5.0,
+      "use_clustering": false
+    }
+  },
+  "extreme_alps": {
+    "name": "Extreme Alps",
+    "description": "Alpes extr\u00eames (pics ac\u00e9r\u00e9s, haute altitude)",
+    "resolution": 2048,
+    "terrain": {
+      "base_scale": 80.0,
+      "octaves": 12,
+      "persistence": 0.7,
+      "lacunarity": 2.4,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 70,
+        "rain_amount": 0.01,
+        "evaporation": 0.3,
+        "capacity": 0.015,
+        "deposition": 0.05,
+        "erosion": 0.4
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 50,
+        "talus_angle": 0.55
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.3,
+      "min_spacing": 4.0,
+      "use_clustering": true
+    }
+  },
+  "desert_dunes": {
+    "name": "Desert Dunes",
+    "description": "Dunes de d\u00e9sert (ondulations douces, pas de v\u00e9g\u00e9tation)",
+    "resolution": 2048,
+    "terrain": {
+      "base_scale": 250.0,
+      "octaves": 5,
+      "persistence": 0.4,
+      "lacunarity": 1.6,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": false
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 20,
+        "talus_angle": 0.8
+      }
+    },
+    "vegetation": {
+      "enabled": false
+    }
+  },
+  "canyon_erosion": {
+    "name": "Canyon Erosion",
+    "description": "Canyon avec forte \u00e9rosion hydraulique",
+    "resolution": 2048,
+    "terrain": {
+      "base_scale": 110.0,
+      "octaves": 8,
+      "persistence": 0.55,
+      "lacunarity": 2.0,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 150,
+        "rain_amount": 0.02,
+        "evaporation": 0.4,
+        "capacity": 0.02,
+        "deposition": 0.05,
+        "erosion": 0.45
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 30,
+        "talus_angle": 0.6
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.4,
+      "min_spacing": 3.0,
+      "use_clustering": true
+    }
+  },
+  "coastal_cliffs": {
+    "name": "Coastal Cliffs",
+    "description": "Falaises c\u00f4ti\u00e8res (forte \u00e9rosion, d\u00e9nivel\u00e9 important)",
+    "resolution": 2048,
+    "terrain": {
+      "base_scale": 95.0,
+      "octaves": 9,
+      "persistence": 0.6,
+      "lacunarity": 2.1,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 90,
+        "rain_amount": 0.018,
+        "evaporation": 0.5,
+        "capacity": 0.015,
+        "deposition": 0.08,
+        "erosion": 0.38
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 45,
+        "talus_angle": 0.58
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.35,
+      "min_spacing": 3.5,
+      "use_clustering": true
+    }
+  },
+  "rolling_plains": {
+    "name": "Rolling Plains",
+    "description": "Plaines ondul\u00e9es (v\u00e9g\u00e9tation dense, peu de relief)",
+    "resolution": 2048,
+    "terrain": {
+      "base_scale": 300.0,
+      "octaves": 4,
+      "persistence": 0.35,
+      "lacunarity": 1.5,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 30,
+        "rain_amount": 0.01,
+        "evaporation": 0.7,
+        "capacity": 0.008,
+        "deposition": 0.15,
+        "erosion": 0.2
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 15,
+        "talus_angle": 0.85
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.8,
+      "min_spacing": 1.5,
+      "use_clustering": true
+    }
+  },
+  "glacial_valley": {
+    "name": "Glacial Valley",
+    "description": "Vall\u00e9e glaciaire (U-shaped valley, \u00e9rosion sp\u00e9cifique)",
+    "resolution": 2048,
+    "terrain": {
+      "base_scale": 130.0,
+      "octaves": 8,
+      "persistence": 0.5,
+      "lacunarity": 2.0,
+      "seed": 42
+    },
+    "erosion": {
+      "hydraulic": {
+        "enabled": true,
+        "iterations": 100,
+        "rain_amount": 0.015,
+        "evaporation": 0.3,
+        "capacity": 0.018,
+        "deposition": 0.12,
+        "erosion": 0.35
+      },
+      "thermal": {
+        "enabled": true,
+        "iterations": 40,
+        "talus_angle": 0.65
+      }
+    },
+    "vegetation": {
+      "enabled": true,
+      "density": 0.45,
+      "min_spacing": 3.0,
+      "use_clustering": true
+    }
+  }
+}

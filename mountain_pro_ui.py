@@ -31,7 +31,7 @@ from core.terrain.thermal_erosion import ThermalErosionSystem
 from core.vegetation.biome_classifier import BiomeClassifier
 from core.vegetation.vegetation_placer import VegetationPlacer
 from core.rendering.pbr_splatmap_generator import PBRSplatmapGenerator
-from core.vfx.prompt_generator import VFXPromptGenerator
+from core.rendering.vfx_prompt_generator import VFXPromptGenerator
 
 
 class GenerationThread(QThread):
