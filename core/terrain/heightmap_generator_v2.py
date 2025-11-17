@@ -463,7 +463,7 @@ class HeightmapGeneratorV2:
                 result,
                 num_iterations=thermal_iters,
                 talus_angle=0.7,  # 35 degrees
-                erosion_rate=0.5 * strength
+                erosion_amount=0.5 * strength
             )
             logger.info(f"Thermal erosion complete: {thermal_iters} iterations")
 

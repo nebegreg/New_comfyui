@@ -182,10 +182,13 @@ class GenerationThread(QThread):
             self.progress.emit(92, "Génération PBR splatmaps...")
             splatmap_gen = PBRSplatmapGenerator(resolution, resolution)
 
+            # Generate splatmap from heightmap only (moisture auto-generated)
             splatmap1, splatmap2 = splatmap_gen.generate_splatmap(
                 heightmap,
-                normal_map,
-                biome_map if biome_map is not None else None
+                moisture_map=None,  # Auto-generated internally
+                custom_materials=None,  # Use default materials
+                apply_weathering=True,
+                smooth_transitions=True
             )
 
             splatmaps = [splatmap1, splatmap2]
@@ -1026,22 +1029,14 @@ class MountainProUI(QMainWindow):
             'max': float(np.max(self.current_heightmap))
         }
 
-        # Determine terrain style based on characteristics
-        if elevation_stats['std'] > 0.3:
-            style = "dramatic"
-        elif elevation_stats['mean'] > 0.6:
-            style = "epic"
-        else:
-            style = "cinematic"
-
-        # Generate prompt
-        prompt_result = vfx_gen.generate_prompt(
-            terrain_type="mountain",
-            style=style,
-            lighting_time="golden_hour",
-            weather="clear",
-            camera_angle="wide",
-            additional_elements=["snow_caps", "rock_formations"] if elevation_stats['max'] > 0.7 else ["vegetation", "valleys"]
+        # Generate prompt using auto-generation from heightmap
+        prompt_result = vfx_gen.auto_generate_from_heightmap(
+            self.current_heightmap,
+            biome_map=self.current_biome_map,
+            vegetation_density_map=self.current_density_map,
+            time_of_day='sunset' if elevation_stats['mean'] > 0.5 else 'golden_hour',
+            weather='clear',
+            season='summer'
         )
 
         # Store prompt
