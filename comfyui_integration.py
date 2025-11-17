@@ -14,14 +14,81 @@ import random
 
 
 class ComfyUIIntegration:
-    """Intégration avec ComfyUI API"""
+    """Intégration avec ComfyUI API - CORRIGÉE pour erreur 400"""
 
     def __init__(self, server_address: str = "127.0.0.1:8188"):
         self.server_address = server_address
         self.client_id = str(random.randint(0, 1000000))
+        self.available_checkpoints = []
+        self.default_checkpoint = None
 
-    def generate_workflow(self, prompt: str, negative_prompt: str, width: int, height: int, steps: int, seed: int) -> Dict:
-        """Génère un workflow ComfyUI pour la génération d'image"""
+    def test_connection(self) -> bool:
+        """Teste la connexion à ComfyUI et découvre les modèles disponibles"""
+        try:
+            # Test simple de connexion
+            response = requests.get(f"http://{self.server_address}/system_stats", timeout=5)
+            if response.status_code != 200:
+                print(f"❌ ComfyUI ne répond pas (status {response.status_code})")
+                return False
+
+            # Récupérer la liste des checkpoints disponibles
+            try:
+                obj_info_response = requests.get(f"http://{self.server_address}/object_info")
+                if obj_info_response.status_code == 200:
+                    obj_info = obj_info_response.json()
+                    if 'CheckpointLoaderSimple' in obj_info:
+                        checkpoint_info = obj_info['CheckpointLoaderSimple']
+                        if 'input' in checkpoint_info and 'required' in checkpoint_info['input']:
+                            ckpt_options = checkpoint_info['input']['required'].get('ckpt_name', [[]])
+                            if isinstance(ckpt_options, list) and len(ckpt_options) > 0:
+                                self.available_checkpoints = ckpt_options[0]
+                                if self.available_checkpoints:
+                                    self.default_checkpoint = self.available_checkpoints[0]
+                                    print(f"✓ ComfyUI connecté - {len(self.available_checkpoints)} modèles trouvés")
+                                    print(f"  Modèle par défaut: {self.default_checkpoint}")
+                                    return True
+            except Exception as e:
+                print(f"⚠ Impossible de lister les modèles: {e}")
+
+            # Fallback: connexion OK mais pas de liste de modèles
+            print("✓ ComfyUI connecté (liste de modèles non disponible)")
+            self.default_checkpoint = "sd_xl_base_1.0.safetensors"  # Défaut
+            return True
+
+        except requests.exceptions.RequestException as e:
+            print(f"❌ Impossible de se connecter à ComfyUI: {e}")
+            print(f"   Vérifiez que ComfyUI est lancé sur {self.server_address}")
+            return False
+
+    def get_available_checkpoints(self) -> list:
+        """Retourne la liste des checkpoints disponibles"""
+        if not self.available_checkpoints:
+            self.test_connection()
+        return self.available_checkpoints
+
+    def generate_workflow(self, prompt: str, negative_prompt: str, width: int, height: int,
+                         steps: int, seed: int, checkpoint: Optional[str] = None) -> Dict:
+        """
+        Génère un workflow ComfyUI pour la génération d'image
+
+        Args:
+            checkpoint: Nom du checkpoint (si None, utilise le défaut)
+        """
+        # Utiliser le checkpoint spécifié ou le défaut
+        if checkpoint is None:
+            if self.default_checkpoint is None:
+                self.test_connection()
+            checkpoint = self.default_checkpoint or "sd_xl_base_1.0.safetensors"
+
+        # Vérifier que le checkpoint existe
+        if self.available_checkpoints and checkpoint not in self.available_checkpoints:
+            print(f"⚠ Checkpoint '{checkpoint}' non trouvé")
+            print(f"   Checkpoints disponibles: {', '.join(self.available_checkpoints[:5])}...")
+            # Utiliser le premier disponible
+            if self.available_checkpoints:
+                checkpoint = self.available_checkpoints[0]
+                print(f"   Utilisation de: {checkpoint}")
+
         workflow = {
             "3": {
                 "inputs": {
@@ -40,7 +107,7 @@ class ComfyUIIntegration:
             },
             "4": {
                 "inputs": {
-                    "ckpt_name": "sd_xl_base_1.0.safetensors"
+                    "ckpt_name": checkpoint
                 },
                 "class_type": "CheckpointLoaderSimple"
             },
@@ -84,17 +151,63 @@ class ComfyUIIntegration:
         return workflow
 
     def queue_prompt(self, workflow: Dict) -> Optional[str]:
-        """Envoie un workflow à ComfyUI"""
+        """Envoie un workflow à ComfyUI avec gestion d'erreurs améliorée"""
         try:
             p = {"prompt": workflow, "client_id": self.client_id}
-            response = requests.post(f"http://{self.server_address}/prompt", json=p)
+            response = requests.post(f"http://{self.server_address}/prompt", json=p, timeout=10)
+
             if response.status_code == 200:
-                return response.json().get('prompt_id')
-            else:
-                print(f"Erreur: {response.status_code}")
+                result = response.json()
+                if 'prompt_id' in result:
+                    return result['prompt_id']
+                elif 'error' in result:
+                    print(f"❌ Erreur ComfyUI: {result['error']}")
+                    if 'node_errors' in result:
+                        print(f"   Erreurs de nodes: {result['node_errors']}")
+                    return None
+                else:
+                    print(f"⚠ Réponse inattendue: {result}")
+                    return None
+
+            elif response.status_code == 400:
+                # Erreur 400 - Bad Request
+                print(f"❌ Erreur 400 - Bad Request")
+                try:
+                    error_detail = response.json()
+                    print(f"   Détails: {error_detail}")
+
+                    # Analyser l'erreur pour aider au debug
+                    if 'error' in error_detail:
+                        error_msg = error_detail['error']
+                        if 'node_errors' in error_detail:
+                            print(f"   Nodes problématiques:")
+                            for node_id, node_error in error_detail['node_errors'].items():
+                                print(f"     - Node {node_id}: {node_error}")
+
+                        # Suggestions courantes
+                        if 'ckpt_name' in str(error_detail).lower():
+                            print(f"\n   💡 Suggestion: Le checkpoint spécifié n'existe pas")
+                            print(f"      Checkpoints disponibles: {self.available_checkpoints[:3]}")
+                        elif 'required' in str(error_detail).lower():
+                            print(f"\n   💡 Suggestion: Il manque des paramètres requis dans le workflow")
+
+                except Exception as parse_err:
+                    print(f"   Impossible de parser l'erreur: {parse_err}")
+                    print(f"   Réponse brute: {response.text}")
+
                 return None
+
+            else:
+                print(f"❌ Erreur HTTP {response.status_code}")
+                print(f"   Réponse: {response.text[:200]}")
+                return None
+
+        except requests.exceptions.Timeout:
+            print(f"❌ Timeout lors de la connexion à ComfyUI")
+            print(f"   Vérifiez que ComfyUI est lancé et accessible")
+            return None
         except Exception as e:
-            print(f"Erreur de connexion à ComfyUI: {e}")
+            print(f"❌ Erreur lors de la communication avec ComfyUI: {e}")
             return None
 
     def get_image(self, prompt_id: str, timeout: int = 300) -> Optional[Image.Image]:
