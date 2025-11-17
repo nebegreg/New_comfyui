@@ -60,44 +60,30 @@ class GenerationThread(QThread):
         """Generate terrain using new HeightmapGenerator with advanced erosion"""
         self.progress.emit(5, "Initialisation générateur...")
 
-        # Use preset if specified
-        if self.params.get('use_preset'):
-            preset_mgr = PresetManager()
-            config = preset_mgr.get_preset(self.params['preset_name'])
-        else:
-            config = {
-                'terrain': {
-                    'base_scale': self.params.get('scale', 100.0),
-                    'octaves': self.params.get('octaves', 8),
-                    'persistence': self.params.get('persistence', 0.5),
-                    'lacunarity': self.params.get('lacunarity', 2.0),
-                    'seed': self.params.get('seed', 42)
-                },
-                'erosion': {
-                    'hydraulic': {
-                        'enabled': self.params.get('hydraulic_enabled', True),
-                        'iterations': self.params.get('hydraulic_iterations', 50),
-                        'rain_amount': self.params.get('rain_amount', 0.01),
-                        'evaporation': self.params.get('evaporation', 0.5)
-                    },
-                    'thermal': {
-                        'enabled': self.params.get('thermal_enabled', True),
-                        'iterations': self.params.get('thermal_iterations', 30),
-                        'talus_angle': self.params.get('talus_angle', 0.7)
-                    }
-                }
-            }
-
+        # Create terrain generator (no config parameter)
         terrain_gen = HeightmapGenerator(
             width=self.params['resolution'],
-            height=self.params['resolution'],
-            config=config
+            height=self.params['resolution']
         )
 
         self.progress.emit(15, "Génération heightmap avec érosion...")
+
+        # Calculate erosion iterations from hydraulic iterations parameter
+        # HeightmapGenerator.generate() uses a single erosion_iterations parameter
+        erosion_iters = self.params.get('hydraulic_iterations', 50) * 1000  # Convert to actual iterations
+
         heightmap = terrain_gen.generate(
-            use_hydraulic=config['erosion']['hydraulic']['enabled'],
-            use_thermal=config['erosion']['thermal']['enabled']
+            mountain_type=self.params.get('mountain_type', 'alpine'),
+            scale=self.params.get('scale', 100.0),
+            octaves=self.params.get('octaves', 8),
+            persistence=self.params.get('persistence', 0.5),
+            lacunarity=self.params.get('lacunarity', 2.0),
+            seed=self.params.get('seed', 42),
+            apply_hydraulic_erosion=self.params.get('hydraulic_enabled', True),
+            apply_thermal_erosion=self.params.get('thermal_enabled', True),
+            erosion_iterations=erosion_iters,
+            domain_warp_strength=0.3,
+            use_ridged_multifractal=True
         )
 
         self.progress.emit(40, "Génération normal map...")
