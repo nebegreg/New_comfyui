@@ -571,19 +571,30 @@ class PBRSplatmapGenerator:
 
     def _generate_perlin_noise(self, scale: float) -> np.ndarray:
         """Génère bruit Perlin pour variation"""
-        import noise as pnoise
+        try:
+            import noise as pnoise
 
-        noise_map = np.zeros((self.height, self.width))
+            noise_map = np.zeros((self.height, self.width))
 
-        for y in range(self.height):
-            for x in range(self.width):
-                noise_map[y, x] = pnoise.pnoise2(
-                    x / scale,
-                    y / scale,
-                    octaves=3,
-                    persistence=0.5,
-                    lacunarity=2.0
-                )
+            for y in range(self.height):
+                for x in range(self.width):
+                    noise_map[y, x] = pnoise.pnoise2(
+                        x / scale,
+                        y / scale,
+                        octaves=3,
+                        persistence=0.5,
+                        lacunarity=2.0
+                    )
+        except ImportError:
+            # Fallback to opensimplex if noise not available
+            from opensimplex import OpenSimplex
+
+            noise_gen = OpenSimplex(seed=42)
+            noise_map = np.zeros((self.height, self.width))
+
+            for y in range(self.height):
+                for x in range(self.width):
+                    noise_map[y, x] = noise_gen.noise2(x / scale, y / scale)
 
         # Normaliser 0-1
         noise_map = (noise_map - noise_map.min()) / (noise_map.max() - noise_map.min())

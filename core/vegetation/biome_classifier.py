@@ -11,7 +11,7 @@ Biomes supportés:
 """
 
 import numpy as np
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 from enum import IntEnum
 import logging
 
@@ -142,15 +142,25 @@ class BiomeClassifier:
         moisture += aspect_factor * 0.2
 
         # Ajouter bruit Perlin pour variation
-        import noise as pnoise
-        noise_layer = np.zeros_like(heightmap)
-        for y in range(self.height):
-            for x in range(self.width):
-                noise_layer[y, x] = pnoise.pnoise2(
-                    x / 100.0,
-                    y / 100.0,
-                    octaves=3
-                )
+        try:
+            import noise as pnoise
+            noise_layer = np.zeros_like(heightmap)
+            for y in range(self.height):
+                for x in range(self.width):
+                    noise_layer[y, x] = pnoise.pnoise2(
+                        x / 100.0,
+                        y / 100.0,
+                        octaves=3
+                    )
+        except ImportError:
+            # Fallback to opensimplex if noise not available
+            from opensimplex import OpenSimplex
+            noise_gen = OpenSimplex(seed=42)
+            noise_layer = np.zeros_like(heightmap)
+            for y in range(self.height):
+                for x in range(self.width):
+                    noise_layer[y, x] = noise_gen.noise2(x / 100.0, y / 100.0)
+
         noise_layer = (noise_layer - noise_layer.min()) / (noise_layer.max() - noise_layer.min())
         moisture += noise_layer * 0.1
 

@@ -10,7 +10,11 @@ Générateur de heightmap optimisé avec techniques avancées
 
 import numpy as np
 from typing import Tuple, Optional, Dict, Literal
-import noise  # Perlin noise library
+try:
+    import noise  # Perlin noise library
+    HAS_NOISE = True
+except ImportError:
+    HAS_NOISE = False
 from opensimplex import OpenSimplex
 import logging
 
@@ -325,16 +329,23 @@ class HeightmapGenerator:
         # mais pour l'instant on utilise noise library avec optimisations
 
         # Vectorisation partielle par lignes (compromis perf/simplicité)
-        for i in range(height):
-            for j in range(width):
-                result[i, j] = noise.pnoise2(
-                    x[i, j],
-                    y[i, j],
-                    octaves=1,
-                    persistence=0.5,
-                    lacunarity=2.0,
-                    base=seed
-                )
+        if HAS_NOISE:
+            for i in range(height):
+                for j in range(width):
+                    result[i, j] = noise.pnoise2(
+                        x[i, j],
+                        y[i, j],
+                        octaves=1,
+                        persistence=0.5,
+                        lacunarity=2.0,
+                        base=seed
+                    )
+        else:
+            # Fallback to opensimplex
+            noise_gen = OpenSimplex(seed=seed)
+            for i in range(height):
+                for j in range(width):
+                    result[i, j] = noise_gen.noise2(x[i, j], y[i, j])
 
         return result
 
