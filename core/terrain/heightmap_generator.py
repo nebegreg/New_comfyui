@@ -178,6 +178,9 @@ class HeightmapGenerator:
         # Normalisation finale
         heightmap = self._normalize(heightmap)
 
+        # Stocker pour generate_normal_map/depth_map/ao
+        self._last_heightmap = heightmap
+
         logger.info("Génération heightmap terminée")
         return heightmap
 
@@ -501,3 +504,137 @@ class HeightmapGenerator:
             heightmap_strat = cp.asarray(heightmap_strat)
 
         return heightmap_strat
+
+    def generate_normal_map(self, heightmap: Optional[np.ndarray] = None, strength: float = 1.0) -> np.ndarray:
+        """
+        Génère une normal map depuis la heightmap
+
+        Args:
+            heightmap: Heightmap à utiliser (si None, utilise la dernière générée)
+            strength: Force des normales (1.0 = normal)
+
+        Returns:
+            Normal map RGB (0-255)
+        """
+        if heightmap is None:
+            if not hasattr(self, '_last_heightmap'):
+                raise ValueError("Aucune heightmap disponible. Générez-en une d'abord avec generate()")
+            heightmap = self._last_heightmap
+        else:
+            # Store for future use
+            self._last_heightmap = heightmap
+
+        # Convertir en NumPy si GPU
+        if self.use_gpu:
+            heightmap = cp.asnumpy(heightmap)
+
+        # Calculer gradients
+        grad_y, grad_x = np.gradient(heightmap)
+
+        # Appliquer strength
+        grad_x *= strength
+        grad_y *= strength
+
+        # Calculer normales (méthode Sobel améliorée)
+        # Normal = (-dx, -dy, 1) normalisé
+        normal_x = -grad_x
+        normal_y = -grad_y
+        normal_z = np.ones_like(heightmap)
+
+        # Normaliser
+        length = np.sqrt(normal_x**2 + normal_y**2 + normal_z**2)
+        normal_x /= length
+        normal_y /= length
+        normal_z /= length
+
+        # Convertir en RGB (0-255)
+        # Normal map standard: R = X+, G = Y+, B = Z+
+        normal_r = ((normal_x + 1.0) * 0.5 * 255).astype(np.uint8)
+        normal_g = ((normal_y + 1.0) * 0.5 * 255).astype(np.uint8)
+        normal_b = ((normal_z + 1.0) * 0.5 * 255).astype(np.uint8)
+
+        # Stacker en RGB
+        normal_map = np.stack([normal_r, normal_g, normal_b], axis=2)
+
+        return normal_map
+
+    def generate_depth_map(self, heightmap: Optional[np.ndarray] = None) -> np.ndarray:
+        """
+        Génère une depth map (grayscale) depuis heightmap
+
+        Args:
+            heightmap: Heightmap à utiliser (si None, utilise la dernière générée)
+
+        Returns:
+            Depth map (0-255)
+        """
+        if heightmap is None:
+            if not hasattr(self, '_last_heightmap'):
+                raise ValueError("Aucune heightmap disponible. Générez-en une d'abord avec generate()")
+            heightmap = self._last_heightmap
+        else:
+            self._last_heightmap = heightmap
+
+        # Convertir en NumPy si GPU
+        if self.use_gpu:
+            heightmap = cp.asnumpy(heightmap)
+
+        # Normaliser 0-1
+        depth = (heightmap - heightmap.min()) / (heightmap.max() - heightmap.min())
+
+        # Convertir en uint8 (0-255)
+        depth_map = (depth * 255).astype(np.uint8)
+
+        return depth_map
+
+    def generate_ambient_occlusion(
+        self,
+        heightmap: Optional[np.ndarray] = None,
+        samples: int = 16,
+        radius: float = 5.0,
+        intensity: float = 1.0
+    ) -> np.ndarray:
+        """
+        Génère une Ambient Occlusion map approximative
+
+        Args:
+            heightmap: Heightmap à utiliser
+            samples: Nombre d'échantillons par pixel
+            radius: Rayon de sampling (pixels)
+            intensity: Intensité de l'AO
+
+        Returns:
+            AO map (0-255), plus sombre = plus occlu
+        """
+        if heightmap is None:
+            if not hasattr(self, '_last_heightmap'):
+                raise ValueError("Aucune heightmap disponible")
+            heightmap = self._last_heightmap
+        else:
+            self._last_heightmap = heightmap
+
+        # Convertir en NumPy si GPU
+        if self.use_gpu:
+            heightmap = cp.asnumpy(heightmap)
+
+        # Simplified AO: blur + compare with original
+        # Real AO is more complex, but this gives good approximation
+        from scipy.ndimage import gaussian_filter
+
+        # Blur heightmap
+        blurred = gaussian_filter(heightmap, sigma=radius)
+
+        # Différence = creux/bosses
+        # Zones basses par rapport au blur = occlues
+        diff = heightmap - blurred
+
+        # Normaliser et inverser (creux = sombre)
+        ao = 1.0 - ((diff - diff.min()) / (diff.max() - diff.min() + 1e-6))
+
+        # Appliquer intensity
+        ao = np.power(ao, intensity)
+
+        # Convertir en uint8
+        ao_map = (ao * 255).astype(np.uint8)
+
+        return ao_map

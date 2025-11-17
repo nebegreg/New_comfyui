@@ -334,7 +334,7 @@ def test_vfx_prompts(terrain_result, vegetation_result):
 
         for style in styles:
             model = generator.get_recommended_model(style)
-            print_info(f"  {style}: {model['name']} ({model['recommended_steps']} steps, CFG {model['recommended_cfg']})")
+            print_info(f"  {style}: {model['name']} ({model['steps']} steps, CFG {model['cfg_scale']})")
 
         return result
 
