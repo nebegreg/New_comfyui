@@ -32,6 +32,7 @@ from core.vegetation.biome_classifier import BiomeClassifier
 from core.vegetation.vegetation_placer import VegetationPlacer
 from core.rendering.pbr_splatmap_generator import PBRSplatmapGenerator
 from core.rendering.vfx_prompt_generator import VFXPromptGenerator
+from core.export.professional_exporter import ProfessionalExporter
 
 
 class GenerationThread(QThread):
@@ -163,6 +164,20 @@ class GenerationThread(QThread):
             )
             density_map = placer.generate_density_map()
 
+        # PBR Splatmap generation
+        splatmaps = None
+        if self.params.get('generate_splatmaps', True):  # Generate by default
+            self.progress.emit(92, "Génération PBR splatmaps...")
+            splatmap_gen = PBRSplatmapGenerator(resolution, resolution)
+
+            splatmap1, splatmap2 = splatmap_gen.generate_splatmaps(
+                heightmap,
+                normal_map,
+                biome_map if biome_map is not None else None
+            )
+
+            splatmaps = [splatmap1, splatmap2]
+
         self.progress.emit(100, "Terminé!")
 
         result = {
@@ -173,6 +188,7 @@ class GenerationThread(QThread):
             'biome_map': biome_map,
             'tree_instances': tree_instances,
             'density_map': density_map,
+            'splatmaps': splatmaps,
             'terrain_gen': terrain_gen
         }
 
@@ -199,11 +215,20 @@ class MountainProUI(QMainWindow):
         self.setWindowTitle("Mountain Studio Pro - Outil Professionnel pour Graphistes")
         self.setGeometry(100, 100, 1600, 900)
 
-        # État
+        # État - Terrain data
         self.current_terrain = None
         self.current_heightmap = None
+        self.current_normal_map = None
+        self.current_depth_map = None
+        self.current_ao_map = None
+        self.current_biome_map = None
+        self.current_tree_instances = None
+        self.current_density_map = None
+        self.current_splatmaps = None
+        self.current_vfx_prompt = None
         self.current_texture = None
         self.generation_thread = None
+        self.generation_metadata = {}
 
         # Backends
         self.comfyui = None
@@ -800,8 +825,16 @@ class MountainProUI(QMainWindow):
 
     def on_terrain_generated(self, result, result_type):
         """Callback terrain généré avec nouvelles features"""
+        # Store all results
         self.current_terrain = result['terrain_gen']
         self.current_heightmap = result['heightmap']
+        self.current_normal_map = result.get('normal_map')
+        self.current_depth_map = result.get('depth_map')
+        self.current_ao_map = result.get('ao_map')
+        self.current_biome_map = result.get('biome_map')
+        self.current_tree_instances = result.get('tree_instances')
+        self.current_density_map = result.get('density_map')
+        self.current_splatmaps = result.get('splatmaps')
 
         self.log("✓ Terrain généré avec succès!")
 
@@ -958,9 +991,77 @@ class MountainProUI(QMainWindow):
         self.log("✨ Prompt auto-généré")
 
     def generate_texture(self):
-        """Génère une texture AI"""
-        self.log("🎨 Génération texture AI...")
-        QMessageBox.information(self, "Info", "Fonction en développement")
+        """Génère un prompt VFX pour texturer avec Stable Diffusion"""
+        if self.current_heightmap is None:
+            QMessageBox.warning(self, "Attention", "Générez d'abord un terrain!")
+            return
+
+        self.log("🎨 Génération prompt VFX...")
+
+        # Generate VFX prompt
+        vfx_gen = VFXPromptGenerator()
+
+        # Analyze terrain characteristics
+        elevation_stats = {
+            'mean': float(np.mean(self.current_heightmap)),
+            'std': float(np.std(self.current_heightmap)),
+            'min': float(np.min(self.current_heightmap)),
+            'max': float(np.max(self.current_heightmap))
+        }
+
+        # Determine terrain style based on characteristics
+        if elevation_stats['std'] > 0.3:
+            style = "dramatic"
+        elif elevation_stats['mean'] > 0.6:
+            style = "epic"
+        else:
+            style = "cinematic"
+
+        # Generate prompt
+        prompt_result = vfx_gen.generate_prompt(
+            terrain_type="mountain",
+            style=style,
+            lighting_time="golden_hour",
+            weather="clear",
+            camera_angle="wide",
+            additional_elements=["snow_caps", "rock_formations"] if elevation_stats['max'] > 0.7 else ["vegetation", "valleys"]
+        )
+
+        # Store prompt
+        self.current_vfx_prompt = prompt_result
+
+        # Display in dialog
+        prompt_text = f"""PROMPT POSITIF:
+{prompt_result['positive']}
+
+PROMPT NÉGATIF:
+{prompt_result['negative']}
+
+PARAMÈTRES RECOMMANDÉS:
+{prompt_result['metadata']['recommended_model']} - {prompt_result['metadata']['steps']} steps, CFG {prompt_result['metadata']['cfg_scale']}
+"""
+
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Prompt VFX Généré")
+        dialog.setText("Prompt généré avec succès!")
+        dialog.setDetailedText(prompt_text)
+        dialog.setStandardButtons(QMessageBox.Ok | QMessageBox.Save)
+
+        result = dialog.exec()
+
+        if result == QMessageBox.Save:
+            filepath, _ = QFileDialog.getSaveFileName(
+                self,
+                "Sauvegarder Prompt",
+                "vfx_prompt.txt",
+                "Text Files (*.txt);;All Files (*)"
+            )
+            if filepath:
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(prompt_text)
+                self.log(f"✓ Prompt sauvegardé: {filepath}")
+
+        self.log("✓ Prompt VFX généré")
 
     def generate_video(self):
         """Génère une vidéo cohérente"""
@@ -968,29 +1069,80 @@ class MountainProUI(QMainWindow):
         QMessageBox.information(self, "Info", "Fonction en développement")
 
     def export_all_maps(self):
-        """Exporte toutes les maps"""
-        if self.current_terrain is None:
+        """Exporte toutes les maps avec ProfessionalExporter"""
+        if self.current_heightmap is None:
             QMessageBox.warning(self, "Attention", "Générez d'abord un terrain!")
             return
 
         folder = QFileDialog.getExistingDirectory(self, "Choisir dossier d'export")
         if folder:
-            self.current_terrain.export_all_maps(folder, prefix="mountain_pro")
-            self.log(f"✓ Maps exportées vers: {folder}")
-            QMessageBox.information(self, "Succès", f"Maps exportées vers:\n{folder}")
+            self.log("📦 Export en cours...")
+
+            # Create exporter
+            exporter = ProfessionalExporter(folder)
+
+            # Export complete package
+            exported_files = exporter.export_complete_package(
+                heightmap=self.current_heightmap,
+                normal_map=self.current_normal_map,
+                depth_map=self.current_depth_map,
+                ao_map=self.current_ao_map,
+                splatmaps=self.current_splatmaps,
+                tree_instances=self.current_tree_instances,
+                vfx_prompt=self.current_vfx_prompt,
+                metadata=self.generation_metadata,
+                export_mesh=True,
+                mesh_subsample=2  # Subsample for performance
+            )
+
+            num_files = len(exported_files)
+            self.log(f"✓ {num_files} fichiers exportés vers: {folder}")
+
+            # Show summary
+            file_list = "\n".join([f"• {Path(f).name}" for f in exported_files.values()])
+            QMessageBox.information(
+                self,
+                "Export Réussi",
+                f"Export terminé: {num_files} fichiers\n\n{file_list}"
+            )
 
     def export_mesh(self):
-        """Exporte le mesh 3D"""
-        if self.current_terrain is None:
+        """Exporte le mesh 3D en OBJ"""
+        if self.current_heightmap is None:
             QMessageBox.warning(self, "Attention", "Générez d'abord un terrain!")
             return
 
-        filepath, _ = QFileDialog.getSaveFileName(self, "Exporter Mesh 3D", "", "OBJ Files (*.obj)")
+        filepath, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exporter Mesh 3D",
+            "",
+            "OBJ Files (*.obj);;All Files (*)"
+        )
+
         if filepath:
-            vertices, faces, normals = self.current_terrain.get_3d_mesh_data()
-            self.export_obj(filepath, vertices, faces)
-            self.log(f"✓ Mesh exporté: {filepath}")
-            QMessageBox.information(self, "Succès", f"Mesh exporté:\n{filepath}")
+            self.log("🎨 Export mesh 3D en cours...")
+
+            # Use temporary folder for export
+            import tempfile
+            temp_dir = tempfile.mkdtemp()
+
+            exporter = ProfessionalExporter(temp_dir)
+            exported_obj = exporter.export_mesh_obj(
+                self.current_heightmap,
+                "terrain.obj",
+                scale_x=1.0,
+                scale_y=50.0,  # Amplify height
+                scale_z=1.0,
+                subsample=2  # For performance
+            )
+
+            # Move to desired location
+            import shutil
+            shutil.move(exported_obj, filepath)
+            shutil.rmtree(temp_dir)
+
+            self.log(f"✓ Mesh 3D exporté: {filepath}")
+            QMessageBox.information(self, "Succès", f"Mesh 3D exporté:\n{filepath}")
 
     def export_obj(self, filepath, vertices, faces):
         """Exporte en format OBJ"""
