@@ -60,27 +60,54 @@ class GenerationThread(QThread):
         """Generate terrain using new HeightmapGenerator with advanced erosion"""
         self.progress.emit(5, "Initialisation générateur...")
 
-        # Create terrain generator (no config parameter)
-        terrain_gen = HeightmapGenerator(
-            width=self.params['resolution'],
-            height=self.params['resolution']
-        )
+        # Load preset if specified
+        preset = None
+        if self.params.get('use_preset') and self.params.get('preset_name'):
+            self.progress.emit(8, f"Chargement preset '{self.params['preset_name']}'...")
+            preset_mgr = PresetManager()
+            preset = preset_mgr.get_preset(self.params['preset_name'])
+
+            # Extract terrain parameters from preset
+            terrain_cfg = preset.get('terrain', {})
+            erosion_cfg = preset.get('erosion', {})
+            hydraulic_cfg = erosion_cfg.get('hydraulic', {})
+
+            # Use preset values
+            resolution = preset.get('resolution', self.params['resolution'])
+            scale = terrain_cfg.get('base_scale', 100.0)
+            octaves = terrain_cfg.get('octaves', 8)
+            persistence = terrain_cfg.get('persistence', 0.5)
+            lacunarity = terrain_cfg.get('lacunarity', 2.0)
+            seed = terrain_cfg.get('seed', 42)
+            apply_hydraulic = hydraulic_cfg.get('enabled', True)
+            apply_thermal = erosion_cfg.get('thermal', {}).get('enabled', True)
+            erosion_iters = hydraulic_cfg.get('iterations', 50) * 1000
+        else:
+            # Use UI parameters
+            resolution = self.params['resolution']
+            scale = self.params.get('scale', 100.0)
+            octaves = self.params.get('octaves', 8)
+            persistence = self.params.get('persistence', 0.5)
+            lacunarity = self.params.get('lacunarity', 2.0)
+            seed = self.params.get('seed', 42)
+            apply_hydraulic = self.params.get('hydraulic_enabled', True)
+            apply_thermal = self.params.get('thermal_enabled', True)
+            erosion_iters = self.params.get('hydraulic_iterations', 50) * 1000
+
+        # Create terrain generator
+        terrain_gen = HeightmapGenerator(width=resolution, height=resolution)
 
         self.progress.emit(15, "Génération heightmap avec érosion...")
 
-        # Calculate erosion iterations from hydraulic iterations parameter
-        # HeightmapGenerator.generate() uses a single erosion_iterations parameter
-        erosion_iters = self.params.get('hydraulic_iterations', 50) * 1000  # Convert to actual iterations
-
         heightmap = terrain_gen.generate(
             mountain_type=self.params.get('mountain_type', 'alpine'),
-            scale=self.params.get('scale', 100.0),
-            octaves=self.params.get('octaves', 8),
-            persistence=self.params.get('persistence', 0.5),
-            lacunarity=self.params.get('lacunarity', 2.0),
-            seed=self.params.get('seed', 42),
-            apply_hydraulic_erosion=self.params.get('hydraulic_enabled', True),
-            apply_thermal_erosion=self.params.get('thermal_enabled', True),
+            scale=scale,
+            octaves=octaves,
+            persistence=persistence,
+            lacunarity=lacunarity,
+            seed=seed,
+            apply_hydraulic_erosion=apply_hydraulic,
+            apply_thermal_erosion=apply_thermal,
             erosion_iterations=erosion_iters,
             domain_warp_strength=0.3,
             use_ridged_multifractal=True
@@ -95,31 +122,44 @@ class GenerationThread(QThread):
         self.progress.emit(65, "Génération AO...")
         ao_map = terrain_gen.generate_ambient_occlusion()
 
+        # Get vegetation parameters (from preset or UI)
+        if preset is not None:
+            veg_cfg = preset.get('vegetation', {})
+            generate_veg = veg_cfg.get('enabled', False) or self.params.get('generate_vegetation', False)
+            veg_density = veg_cfg.get('density', 0.5)
+            veg_spacing = veg_cfg.get('min_spacing', 3.0)
+            veg_clustering = veg_cfg.get('use_clustering', True)
+        else:
+            generate_veg = self.params.get('generate_vegetation', False)
+            veg_density = self.params.get('vegetation_density', 0.5)
+            veg_spacing = self.params.get('vegetation_spacing', 3.0)
+            veg_clustering = self.params.get('use_clustering', True)
+
         # Biome classification
         biome_map = None
-        if self.params.get('generate_biomes', False):
+        if generate_veg or self.params.get('generate_biomes', False):
             self.progress.emit(75, "Classification biomes...")
             biome_classifier = BiomeClassifier(
-                width=self.params['resolution'],
-                height=self.params['resolution']
+                width=resolution,
+                height=resolution
             )
             biome_map = biome_classifier.classify(heightmap)
 
         # Vegetation placement
         tree_instances = None
         density_map = None
-        if self.params.get('generate_vegetation', False) and biome_map is not None:
+        if generate_veg and biome_map is not None:
             self.progress.emit(85, "Placement végétation...")
             placer = VegetationPlacer(
-                self.params['resolution'],
-                self.params['resolution'],
+                resolution,
+                resolution,
                 heightmap,
                 biome_map
             )
             tree_instances = placer.place_vegetation(
-                density=self.params.get('vegetation_density', 0.5),
-                min_spacing=self.params.get('vegetation_spacing', 3.0),
-                use_clustering=self.params.get('use_clustering', True)
+                density=veg_density,
+                min_spacing=veg_spacing,
+                use_clustering=veg_clustering
             )
             density_map = placer.generate_density_map()
 
