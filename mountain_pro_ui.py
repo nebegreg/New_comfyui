@@ -25,7 +25,7 @@ from video_generator import VideoGenerator
 
 # New core modules (Mountain Studio Pro v2.0)
 from core.config.preset_manager import PresetManager
-from core.terrain.heightmap_generator import HeightmapGenerator
+from core.terrain.heightmap_generator_v2 import HeightmapGeneratorV2  # Ultra-realistic V2
 from core.terrain.hydraulic_erosion import HydraulicErosionSystem
 from core.terrain.thermal_erosion import ThermalErosionSystem
 from core.vegetation.biome_classifier import BiomeClassifier
@@ -33,6 +33,7 @@ from core.vegetation.vegetation_placer import VegetationPlacer
 from core.rendering.pbr_splatmap_generator import PBRSplatmapGenerator
 from core.rendering.vfx_prompt_generator import VFXPromptGenerator
 from core.export.professional_exporter import ProfessionalExporter
+from core.ai.comfyui_integration import ComfyUIClient, generate_pbr_textures, generate_landscape_image
 
 
 class GenerationThread(QThread):
@@ -95,33 +96,44 @@ class GenerationThread(QThread):
             apply_thermal = self.params.get('thermal_enabled', True)
             erosion_iters = self.params.get('hydraulic_iterations', 50) * 1000
 
-        # Create terrain generator
-        terrain_gen = HeightmapGenerator(width=resolution, height=resolution)
+        # Create ULTRA-REALISTIC terrain generator V2
+        terrain_gen = HeightmapGeneratorV2(width=resolution, height=resolution)
 
-        self.progress.emit(15, "Génération heightmap avec érosion...")
+        self.progress.emit(15, "Génération heightmap ULTRA-RÉALISTE...")
+
+        # Use preset name if available, otherwise use mountain type
+        preset_name = self.params.get('preset_name') if self.params.get('use_preset') else None
 
         heightmap = terrain_gen.generate(
-            mountain_type=self.params.get('mountain_type', 'alpine'),
-            scale=scale,
-            octaves=octaves,
-            persistence=persistence,
+            mountain_type=self.params.get('mountain_type', 'ultra_realistic'),
+            preset=preset_name,
+            scale=1.0,  # V2 uses normalized scale
+            octaves=max(12, octaves),  # V2 needs higher octaves for quality
             lacunarity=lacunarity,
-            seed=seed,
+            gain=persistence,  # V2 uses 'gain' instead of 'persistence'
+            warp_strength=self.params.get('warp_strength', 0.5),
+            erosion_strength=0.7,
             apply_hydraulic_erosion=apply_hydraulic,
             apply_thermal_erosion=apply_thermal,
-            erosion_iterations=erosion_iters,
-            domain_warp_strength=0.3,
-            use_ridged_multifractal=True
+            erosion_iterations=erosion_iters if not preset_name else None,  # Auto if preset
+            seed=seed
         )
 
         self.progress.emit(40, "Génération normal map...")
-        normal_map = terrain_gen.generate_normal_map(strength=self.params.get('normal_strength', 1.0))
+        normal_map = terrain_gen.generate_normal_map(
+            heightmap,
+            strength=self.params.get('normal_strength', 1.0)
+        )
 
         self.progress.emit(55, "Génération depth map...")
-        depth_map = terrain_gen.generate_depth_map()
+        depth_map = terrain_gen.generate_depth_map(heightmap)
 
         self.progress.emit(65, "Génération AO...")
-        ao_map = terrain_gen.generate_ambient_occlusion()
+        ao_map = terrain_gen.generate_ambient_occlusion(
+            heightmap,
+            samples=16,
+            radius=10
+        )
 
         # Get vegetation parameters (from preset or UI)
         if preset is not None:
@@ -996,12 +1008,12 @@ class MountainProUI(QMainWindow):
         self.log("✨ Prompt auto-généré")
 
     def generate_texture(self):
-        """Génère un prompt VFX pour texturer avec Stable Diffusion"""
+        """Génère une texture AI ultra-réaliste avec ComfyUI"""
         if self.current_heightmap is None:
             QMessageBox.warning(self, "Attention", "Générez d'abord un terrain!")
             return
 
-        self.log("🎨 Génération prompt VFX...")
+        self.log("🎨 Génération texture AI avec ComfyUI...")
 
         # Generate VFX prompt
         vfx_gen = VFXPromptGenerator()
@@ -1035,8 +1047,48 @@ class MountainProUI(QMainWindow):
         # Store prompt
         self.current_vfx_prompt = prompt_result
 
-        # Display in dialog
-        prompt_text = f"""PROMPT POSITIF:
+        # Try to generate AI texture with ComfyUI
+        self.log("🤖 Connexion à ComfyUI pour génération AI...")
+
+        try:
+            # Generate landscape image with AI
+            landscape = generate_landscape_image(
+                self.current_heightmap,
+                prompt=prompt_result['positive'],
+                style=style,
+                server_address="127.0.0.1:8188",
+                seed=-1
+            )
+
+            if landscape is not None:
+                self.log("✓ Texture AI générée avec succès!")
+
+                # Display result
+                dialog = QMessageBox(self)
+                dialog.setWindowTitle("Texture AI Générée")
+                dialog.setText("Texture ultra-réaliste générée avec ComfyUI!")
+                dialog.setInformativeText("La texture a été générée en utilisant l'IA. Voulez-vous la sauvegarder?")
+                dialog.setStandardButtons(QMessageBox.Save | QMessageBox.Close)
+
+                if dialog.exec() == QMessageBox.Save:
+                    filepath, _ = QFileDialog.getSaveFileName(
+                        self,
+                        "Sauvegarder Texture AI",
+                        "ai_texture.png",
+                        "PNG Images (*.png);;All Files (*)"
+                    )
+                    if filepath:
+                        Image.fromarray(landscape).save(filepath)
+                        self.log(f"✓ Texture AI sauvegardée: {filepath}")
+
+            else:
+                raise Exception("ComfyUI not available")
+
+        except Exception as e:
+            self.log(f"⚠ ComfyUI non disponible ({e}), affichage du prompt...")
+
+            # Fallback: show prompt for manual use
+            prompt_text = f"""PROMPT POSITIF:
 {prompt_result['positive']}
 
 PROMPT NÉGATIF:
@@ -1044,29 +1096,32 @@ PROMPT NÉGATIF:
 
 PARAMÈTRES RECOMMANDÉS:
 {prompt_result['metadata']['recommended_model']} - {prompt_result['metadata']['steps']} steps, CFG {prompt_result['metadata']['cfg_scale']}
+
+NOTE: ComfyUI n'est pas disponible. Lancez ComfyUI sur http://127.0.0.1:8188
+pour la génération automatique, ou utilisez ce prompt manuellement.
 """
 
-        dialog = QMessageBox(self)
-        dialog.setWindowTitle("Prompt VFX Généré")
-        dialog.setText("Prompt généré avec succès!")
-        dialog.setDetailedText(prompt_text)
-        dialog.setStandardButtons(QMessageBox.Ok | QMessageBox.Save)
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("Prompt VFX (ComfyUI non disponible)")
+            dialog.setText("ComfyUI non détecté - Prompt généré pour usage manuel")
+            dialog.setDetailedText(prompt_text)
+            dialog.setStandardButtons(QMessageBox.Ok | QMessageBox.Save)
 
-        result = dialog.exec()
+            result = dialog.exec()
 
-        if result == QMessageBox.Save:
-            filepath, _ = QFileDialog.getSaveFileName(
-                self,
-                "Sauvegarder Prompt",
-                "vfx_prompt.txt",
-                "Text Files (*.txt);;All Files (*)"
-            )
-            if filepath:
-                with open(filepath, 'w', encoding='utf-8') as f:
-                    f.write(prompt_text)
-                self.log(f"✓ Prompt sauvegardé: {filepath}")
+            if result == QMessageBox.Save:
+                filepath, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Sauvegarder Prompt",
+                    "vfx_prompt.txt",
+                    "Text Files (*.txt);;All Files (*)"
+                )
+                if filepath:
+                    with open(filepath, 'w', encoding='utf-8') as f:
+                        f.write(prompt_text)
+                    self.log(f"✓ Prompt sauvegardé: {filepath}")
 
-        self.log("✓ Prompt VFX généré")
+        self.log("✓ Génération texture terminée")
 
     def generate_video(self):
         """Génère une vidéo cohérente"""
