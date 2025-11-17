@@ -481,15 +481,15 @@ class VegetationPlacer:
 
         data = {
             'tree_count': len(self.tree_instances),
-            'terrain_size': [self.width, self.height],
+            'terrain_size': [int(self.width), int(self.height)],
             'instances': [
                 {
-                    'position': [t.x, t.elevation, t.y],  # X, Height, Z
+                    'position': [float(t.x), float(t.elevation), float(t.y)],  # X, Height, Z
                     'species': t.species,
-                    'scale': t.scale,
-                    'rotation': t.rotation,
-                    'age': t.age,
-                    'health': t.health
+                    'scale': float(t.scale),
+                    'rotation': float(t.rotation),
+                    'age': float(t.age),
+                    'health': float(t.health)
                 }
                 for t in self.tree_instances
             ]
