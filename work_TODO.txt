@@ -1,0 +1,1 @@
+je voudrais une application simulation de montagne ultra realiste. jaimerais avoir une interface graphic avec des parametre pour generer montagne sapin ciel en pseudo 3d . avoir une camera pour choisir mon axe et focal. et ensuite lancer un rendu. pour avoir une image de montagne ultra realiste. peux tu maider?
