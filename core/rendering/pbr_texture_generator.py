@@ -464,6 +464,10 @@ class PBRTextureGenerator:
 
         # Export each texture
         for name, texture in pbr_textures.items():
+            # Skip metadata keys like 'source'
+            if isinstance(texture, str):
+                continue
+
             filename = f"{prefix}_{name}.png"
             filepath = os.path.join(output_dir, filename)
 
