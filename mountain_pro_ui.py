@@ -676,6 +676,11 @@ class MountainProUI(QMainWindow):
         self.export_mesh_btn.clicked.connect(self.export_mesh)
         layout.addWidget(self.export_mesh_btn)
 
+        self.export_flame_btn = QPushButton("🔥 Export pour Autodesk Flame (OBJ+MTL+Textures)")
+        self.export_flame_btn.setStyleSheet("QPushButton { background-color: #E91E63; color: white; padding: 10px; font-weight: bold; }")
+        self.export_flame_btn.clicked.connect(self.export_for_flame)
+        layout.addWidget(self.export_flame_btn)
+
         layout.addStretch()
 
         # Log
@@ -1143,6 +1148,79 @@ PARAMÈTRES RECOMMANDÉS:
 
             self.log(f"✓ Mesh 3D exporté: {filepath}")
             QMessageBox.information(self, "Succès", f"Mesh 3D exporté:\n{filepath}")
+
+    def export_for_flame(self):
+        """Export complet pour Autodesk Flame (OBJ+MTL+Textures)"""
+        if self.current_heightmap is None:
+            QMessageBox.warning(self, "Attention", "Générez d'abord un terrain!")
+            return
+
+        folder = QFileDialog.getExistingDirectory(self, "Choisir dossier d'export Flame")
+        if folder:
+            self.log("🔥 Export pour Autodesk Flame en cours...")
+
+            try:
+                # Create exporter
+                exporter = ProfessionalExporter(folder)
+
+                # Export using dedicated Flame method
+                exported_files = exporter.export_for_autodesk_flame(
+                    heightmap=self.current_heightmap,
+                    normal_map=self.current_normal_map,
+                    depth_map=self.current_depth_map,
+                    ao_map=self.current_ao_map,
+                    diffuse_map=None,  # Will be auto-generated from heightmap
+                    roughness_map=None,
+                    splatmaps=self.current_splatmaps,
+                    tree_instances=self.current_tree_instances,
+                    mesh_subsample=2,
+                    scale_y=50.0
+                )
+
+                num_files = len(exported_files)
+                self.log(f"✓ Export Flame réussi: {num_files} fichiers")
+
+                # Build file list for display
+                file_list = []
+                file_list.append("📁 STRUCTURE EXPORTÉE:")
+                file_list.append(f"  • terrain.obj")
+                file_list.append(f"  • terrain.mtl")
+                file_list.append(f"  📂 textures/")
+
+                if exported_files.get('diffuse'):
+                    file_list.append(f"    • diffuse.png")
+                if exported_files.get('normal'):
+                    file_list.append(f"    • normal.png")
+                if exported_files.get('ao'):
+                    file_list.append(f"    • ao.png")
+                if exported_files.get('displacement'):
+                    file_list.append(f"    • height.png (displacement)")
+                if exported_files.get('depth'):
+                    file_list.append(f"    • depth.png")
+
+                splatmap_count = sum(1 for k in exported_files.keys() if k.startswith('splatmap'))
+                if splatmap_count > 0:
+                    file_list.append(f"    • {splatmap_count} splatmaps PBR")
+
+                if exported_files.get('vegetation'):
+                    file_list.append(f"  • vegetation.json")
+
+                file_list.append(f"  • README_FLAME.txt")
+
+                summary = "\n".join(file_list)
+
+                QMessageBox.information(
+                    self,
+                    "Export Flame Réussi",
+                    f"Export terminé avec succès!\n\n{summary}\n\nLocalisation: {folder}"
+                )
+
+                self.log(f"📦 Tous les fichiers sont dans: {folder}")
+
+            except Exception as e:
+                error_msg = f"Erreur lors de l'export Flame: {str(e)}"
+                self.log(f"❌ {error_msg}")
+                QMessageBox.critical(self, "Erreur Export", error_msg)
 
     def export_obj(self, filepath, vertices, faces):
         """Exporte en format OBJ"""
