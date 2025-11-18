@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# 🏔️ Mountain Studio ULTIMATE v2.0 - Setup & Launch
+# 🏔️ Mountain Studio ULTIMATE v3.0 - Setup & Launch
 # ==================================================
 #
 # Script tout-en-un pour:
@@ -10,7 +10,7 @@
 # 4. Lancer Mountain Studio
 #
 
-echo "🏔️  Mountain Studio ULTIMATE v2.0"
+echo "🏔️  Mountain Studio ULTIMATE v3.0"
 echo "===================================="
 echo ""
 
@@ -106,10 +106,10 @@ fi
 
 # Launch Mountain Studio
 echo ""
-echo "🏔️  Launching Mountain Studio ULTIMATE v2.0..."
+echo "🏔️  Launching Mountain Studio ULTIMATE v3.0..."
 echo ""
 
-python3 mountain_studio_ultimate_v2.py
+python3 mountain_studio_ultimate_v3.py
 
 echo ""
 echo "Application closed."
