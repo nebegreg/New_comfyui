@@ -556,7 +556,11 @@ class ProfessionalExporter:
         # Depth map
         if depth_map is not None:
             depth_path = textures_dir / "depth.png"
-            depth_img = Image.fromarray((depth_map * 65535).astype(np.uint16), mode='I;16')
+            # Convert to float first to avoid overflow, then to uint16
+            depth_normalized = depth_map.astype(np.float32)
+            if depth_normalized.max() > 1.0:
+                depth_normalized = depth_normalized / 255.0  # Normalize if in 0-255 range
+            depth_img = Image.fromarray((depth_normalized * 65535).astype(np.uint16), mode='I;16')
             depth_img.save(depth_path)
             texture_paths['depth'] = "textures/depth.png"
             exported_files['depth'] = str(depth_path)
@@ -565,7 +569,11 @@ class ProfessionalExporter:
         # AO map
         if ao_map is not None:
             ao_path = textures_dir / "ao.png"
-            ao_img = Image.fromarray((ao_map * 255).astype(np.uint8), mode='L')
+            # Normalize if needed
+            ao_normalized = ao_map.astype(np.float32)
+            if ao_normalized.max() > 1.0:
+                ao_normalized = ao_normalized / 255.0
+            ao_img = Image.fromarray((ao_normalized * 255).astype(np.uint8), mode='L')
             ao_img.save(ao_path)
             texture_paths['ao'] = "textures/ao.png"
             exported_files['ao'] = str(ao_path)
@@ -575,9 +583,14 @@ class ProfessionalExporter:
         if diffuse_map is not None:
             diffuse_path = textures_dir / "diffuse.png"
             if len(diffuse_map.shape) == 2:
-                diffuse_img = Image.fromarray((diffuse_map * 255).astype(np.uint8), mode='L')
+                # Grayscale diffuse
+                diffuse_normalized = diffuse_map.astype(np.float32)
+                if diffuse_normalized.max() > 1.0:
+                    diffuse_normalized = diffuse_normalized / 255.0
+                diffuse_img = Image.fromarray((diffuse_normalized * 255).astype(np.uint8), mode='L')
             else:
-                diffuse_img = Image.fromarray(diffuse_map, mode='RGB')
+                # RGB diffuse - assume already in 0-255 range
+                diffuse_img = Image.fromarray(diffuse_map.astype(np.uint8), mode='RGB')
             diffuse_img.save(diffuse_path)
             texture_paths['diffuse'] = "textures/diffuse.png"
             exported_files['diffuse'] = str(diffuse_path)
@@ -585,7 +598,10 @@ class ProfessionalExporter:
         else:
             # Générer diffuse basique depuis heightmap (grayscale)
             diffuse_path = textures_dir / "diffuse.png"
-            diffuse_img = Image.fromarray((heightmap * 255).astype(np.uint8), mode='L')
+            heightmap_normalized = heightmap.astype(np.float32)
+            if heightmap_normalized.max() > 1.0:
+                heightmap_normalized = heightmap_normalized / 255.0
+            diffuse_img = Image.fromarray((heightmap_normalized * 255).astype(np.uint8), mode='L')
             diffuse_img.save(diffuse_path)
             texture_paths['diffuse'] = "textures/diffuse.png"
             exported_files['diffuse'] = str(diffuse_path)
@@ -594,7 +610,11 @@ class ProfessionalExporter:
         # Roughness map
         if roughness_map is not None:
             roughness_path = textures_dir / "roughness.png"
-            roughness_img = Image.fromarray((roughness_map * 255).astype(np.uint8), mode='L')
+            # Normalize if needed
+            roughness_normalized = roughness_map.astype(np.float32)
+            if roughness_normalized.max() > 1.0:
+                roughness_normalized = roughness_normalized / 255.0
+            roughness_img = Image.fromarray((roughness_normalized * 255).astype(np.uint8), mode='L')
             roughness_img.save(roughness_path)
             texture_paths['roughness'] = "textures/roughness.png"
             exported_files['roughness'] = str(roughness_path)

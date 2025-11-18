@@ -36,6 +36,8 @@ ENV/
 
 # Output files
 outputs/
+test_*_output/
+*_export_output/
 *.png
 *.jpg
 *.jpeg

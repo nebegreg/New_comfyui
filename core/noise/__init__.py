@@ -23,13 +23,15 @@ from .fbm import (
 from .ridged_multifractal import (
     ridged_multifractal,
     hybrid_multifractal,
-    swiss_turbulence
+    swiss_turbulence,
+    ultra_realistic_mountains
 )
 
 from .domain_warp import (
     domain_warp_2d,
     advanced_domain_warp,
-    flow_noise
+    flow_noise,
+    ultra_natural_warp
 )
 
 __all__ = [
@@ -48,11 +50,13 @@ __all__ = [
     'ridged_multifractal',
     'hybrid_multifractal',
     'swiss_turbulence',
+    'ultra_realistic_mountains',
 
     # Domain warping
     'domain_warp_2d',
     'advanced_domain_warp',
-    'flow_noise'
+    'flow_noise',
+    'ultra_natural_warp'
 ]
 
 __version__ = '2.0.0'
