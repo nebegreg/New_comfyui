@@ -307,7 +307,13 @@ class HDRIPanoramicGenerator:
 
         # Normalize and apply density
         clouds = clouds / clouds.max() if clouds.max() > 0 else clouds
+
+        # Ensure clouds are positive before power operation
+        clouds = np.clip(clouds, 0, 1)
         clouds = np.power(clouds, 1.5)  # Sharpen
+
+        # Apply density threshold (protect against division by zero)
+        density = max(density, 0.01)  # Minimum density to avoid division by zero
         clouds = (clouds - (1.0 - density)) / density
         clouds = np.clip(clouds, 0, 1)
 
