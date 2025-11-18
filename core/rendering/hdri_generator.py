@@ -586,5 +586,230 @@ class HDRIPanoramicGenerator:
 
         logger.info(f"Preset saved: {output_dir / base_name}")
 
+    # ========== V2 IMPROVEMENTS (2025 Best Practices) ==========
+
+    @staticmethod
+    def _rayleigh_scattering(view_y: np.ndarray, sun_dir_y: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Calculate physically-based Rayleigh scattering for atmosphere.
+
+        Args:
+            view_y: Y component of view direction (altitude) - shape (H, W)
+            sun_dir_y: Y component of sun direction (scalar)
+
+        Returns:
+            Tuple of (R, G, B) scattering arrays, each shape (H, W)
+        """
+        # Altitude-based atmospheric density (exponential falloff)
+        # Scale height: 8km for Earth's atmosphere
+        altitude_factor = np.clip(view_y + 0.2, 0, 1)  # Normalize to [0,1]
+        density = np.exp(-2.0 * (1.0 - altitude_factor))  # Shape: (H, W)
+
+        # Wavelength-dependent scattering (Rayleigh: λ^-4)
+        # Blue scatters more than green, green more than red
+        wavelengths = np.array([0.680, 0.550, 0.440])  # RGB wavelengths in µm
+        scatter_coefficients = np.power(wavelengths, -4.0)
+
+        # Normalize to [0-1] range
+        scatter_coefficients = scatter_coefficients / scatter_coefficients.max()
+
+        # Apply density and sun angle
+        sun_contribution = np.clip(sun_dir_y * 0.5 + 0.5, 0.2, 1.0)
+
+        # Broadcast correctly: scatter_coefficients is (3,), density/sun_contribution are scalar/array
+        scatter_r = scatter_coefficients[0] * density * sun_contribution * 0.5
+        scatter_g = scatter_coefficients[1] * density * sun_contribution * 0.5
+        scatter_b = scatter_coefficients[2] * density * sun_contribution * 0.5
+
+        return scatter_r, scatter_g, scatter_b
+
+    @staticmethod
+    def _kelvin_to_rgb(kelvin: float) -> np.ndarray:
+        """
+        Convert color temperature (Kelvin) to RGB.
+
+        Args:
+            kelvin: Color temperature in Kelvin (1000-40000)
+
+        Returns:
+            RGB color array [0-1]
+        """
+        # Based on Tanner Helland's algorithm
+        # http://www.tannerhelland.com/4435/convert-temperature-rgb-algorithm-code/
+
+        temp = kelvin / 100.0
+
+        # Calculate Red
+        if temp <= 66:
+            red = 1.0
+        else:
+            red = temp - 60
+            red = 329.698727446 * np.power(red, -0.1332047592)
+            red = np.clip(red / 255.0, 0, 1)
+
+        # Calculate Green
+        if temp <= 66:
+            green = temp
+            green = 99.4708025861 * np.log(green) - 161.1195681661
+            green = np.clip(green / 255.0, 0, 1)
+        else:
+            green = temp - 60
+            green = 288.1221695283 * np.power(green, -0.0755148492)
+            green = np.clip(green / 255.0, 0, 1)
+
+        # Calculate Blue
+        if temp >= 66:
+            blue = 1.0
+        elif temp <= 19:
+            blue = 0.0
+        else:
+            blue = temp - 10
+            blue = 138.5177312231 * np.log(blue) - 305.0447927307
+            blue = np.clip(blue / 255.0, 0, 1)
+
+        return np.array([red, green, blue], dtype=np.float32)
+
+    def generate_procedural_enhanced(
+        self,
+        time_of_day: TimeOfDay = TimeOfDay.MIDDAY,
+        cloud_density: float = 0.3,
+        mountain_distance: bool = True,
+        seed: Optional[int] = None,
+        atmosphere_strength: float = 1.0
+    ) -> np.ndarray:
+        """
+        Enhanced HDRI generation with improved atmospheric scattering.
+
+        NEW FEATURES (v2):
+        - Physically-based Rayleigh scattering
+        - Color temperature simulation
+        - Higher dynamic range (true HDR)
+        - Better sky gradients
+
+        Args:
+            time_of_day: Time preset
+            cloud_density: Cloud coverage [0-1]
+            mountain_distance: Add mountain silhouette
+            seed: Random seed
+            atmosphere_strength: Atmospheric effect strength [0-2]
+
+        Returns:
+            Enhanced HDR image with wider dynamic range
+        """
+        if seed is not None:
+            np.random.seed(seed)
+
+        logger.info(f"Generating ENHANCED procedural HDRI: {time_of_day.value}")
+
+        # Get preset parameters
+        params = self.TIME_PRESETS[time_of_day]
+
+        # Create coordinate grid
+        y_coords, x_coords = np.meshgrid(
+            np.linspace(0, 1, self.height),
+            np.linspace(0, 1, self.width),
+            indexing='ij'
+        )
+
+        # Spherical coordinates
+        theta = x_coords * 2 * np.pi
+        phi = (y_coords - 0.5) * np.pi
+
+        # Cartesian
+        x = np.cos(phi) * np.cos(theta)
+        y = np.sin(phi)
+        z = np.cos(phi) * np.sin(theta)
+
+        # Initialize image
+        hdr_image = np.zeros((self.height, self.width, 3), dtype=np.float32)
+
+        # Color temperature for this time of day
+        color_temps = {
+            TimeOfDay.SUNRISE: 2000,
+            TimeOfDay.MORNING: 4500,
+            TimeOfDay.MIDDAY: 6500,
+            TimeOfDay.AFTERNOON: 5500,
+            TimeOfDay.SUNSET: 2500,
+            TimeOfDay.TWILIGHT: 8000,
+            TimeOfDay.NIGHT: 10000
+        }
+        temp_color = self._kelvin_to_rgb(color_temps[time_of_day])
+
+        # 1. IMPROVED Sky gradient with color temperature
+        sky_factor = (y + 1.0) / 2.0
+        sky_factor = np.power(sky_factor, 0.6)  # Smoother gradient
+
+        # Apply color temperature to sky colors
+        sky_top = params['sky_top_color'] * temp_color
+        sky_horizon = params['sky_horizon_color'] * temp_color
+
+        for c in range(3):
+            hdr_image[:, :, c] = sky_horizon[c] + (sky_top[c] - sky_horizon[c]) * sky_factor
+
+        # 2. ENHANCED Sun with higher intensity (true HDR)
+        sun_elevation_rad = np.radians(params['sun_elevation'])
+        sun_azimuth_rad = np.radians(params['sun_azimuth'])
+
+        sun_dir = np.array([
+            np.cos(sun_elevation_rad) * np.cos(sun_azimuth_rad),
+            np.sin(sun_elevation_rad),
+            np.cos(sun_elevation_rad) * np.sin(sun_azimuth_rad)
+        ])
+
+        dot_sun = x * sun_dir[0] + y * sun_dir[1] + z * sun_dir[2]
+        dot_sun = np.clip(dot_sun, 0, 1)
+
+        # HIGHER intensity for true HDR (was 10.0, now up to 100.0)
+        sun_disk = np.power(dot_sun, 2000.0) * params['sun_intensity'] * 100.0
+        sun_glow = np.power(dot_sun, 20.0) * params['sun_intensity'] * 10.0
+
+        # Apply color temperature to sun
+        sun_color_temp = params['sun_color'] * temp_color
+
+        for c in range(3):
+            hdr_image[:, :, c] += (sun_disk + sun_glow) * sun_color_temp[c]
+
+        # 3. IMPROVED Atmospheric scattering (Rayleigh)
+        if atmosphere_strength > 0:
+            scatter_r, scatter_g, scatter_b = self._rayleigh_scattering(y, sun_dir[1])
+            hdr_image[:, :, 0] += scatter_r * atmosphere_strength * params['exposure']
+            hdr_image[:, :, 1] += scatter_g * atmosphere_strength * params['exposure']
+            hdr_image[:, :, 2] += scatter_b * atmosphere_strength * params['exposure']
+
+        # 4. Clouds (same as before)
+        if cloud_density > 0:
+            clouds = self._generate_clouds(theta, phi, cloud_density, seed)
+            # Higher cloud brightness for HDR
+            cloud_color = np.array([2.0, 2.0, 2.0]) * params['exposure']
+
+            for c in range(3):
+                hdr_image[:, :, c] = hdr_image[:, :, c] * (1 - clouds) + cloud_color[c] * clouds
+
+        # 5. Distant mountains
+        if mountain_distance:
+            mountains = self._generate_mountain_silhouette(theta, phi, y, seed)
+            mountain_color = params['ground_color'] * 0.5 * temp_color
+
+            for c in range(3):
+                hdr_image[:, :, c] = hdr_image[:, :, c] * (1 - mountains) + mountain_color[c] * mountains
+
+        # 6. Ground
+        ground_mask = (y < -0.05).astype(np.float32)
+        ground_gradient = np.clip((-y - 0.05) / 0.3, 0, 1)
+        ground_color = params['ground_color'] * temp_color
+
+        for c in range(3):
+            hdr_image[:, :, c] = (
+                hdr_image[:, :, c] * (1 - ground_mask) +
+                ground_color[c] * ground_gradient * ground_mask
+            )
+
+        # Apply overall exposure (higher than before for true HDR)
+        hdr_image *= params['exposure'] * 1.5
+
+        logger.info(f"Enhanced HDRI generated: range=[{hdr_image.min():.3f}, {hdr_image.max():.3f}]")
+
+        return hdr_image
+
     def __repr__(self) -> str:
         return f"HDRIPanoramicGenerator({self.width}x{self.height})"

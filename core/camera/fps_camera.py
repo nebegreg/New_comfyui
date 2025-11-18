@@ -87,6 +87,13 @@ class FPSCamera:
         self._move_up = False
         self._move_down = False
 
+        # Smooth movement parameters (NEW - for professional feel)
+        self.acceleration = 50.0  # units/s² - how fast we reach max speed
+        self.deceleration = 100.0  # units/s² - how fast we stop (faster than accel)
+        self.max_speed = self.speed  # Max velocity
+        self.current_velocity = np.array([0.0, 0.0, 0.0], dtype=np.float32)  # Current velocity vector
+        self.smooth_movement = True  # Toggle smooth movement (can disable for instant response)
+
         # Cached vectors
         self._front = np.array([0.0, 0.0, -1.0], dtype=np.float32)
         self._right = np.array([1.0, 0.0, 0.0], dtype=np.float32)
@@ -165,10 +172,18 @@ class FPSCamera:
     def process_keyboard(self, delta_time: float):
         """
         Update position based on current keyboard state.
+        Uses smooth acceleration/deceleration for professional feel.
 
         Args:
             delta_time: Time since last frame in seconds
         """
+        if self.smooth_movement:
+            self._process_keyboard_smooth(delta_time)
+        else:
+            self._process_keyboard_instant(delta_time)
+
+    def _process_keyboard_instant(self, delta_time: float):
+        """Original instant movement (backward compatibility)."""
         velocity = self.speed * delta_time
 
         # Calculate movement on horizontal plane (ignore Y component of front)
@@ -193,6 +208,74 @@ class FPSCamera:
             self.position += self._world_up * velocity
         if self._move_down:
             self.position -= self._world_up * velocity
+
+        # Apply collision
+        if self.collision_enabled and self._heightmap is not None:
+            self._apply_terrain_collision()
+
+    def _process_keyboard_smooth(self, delta_time: float):
+        """
+        Smooth movement with acceleration/deceleration.
+        Feels more professional and realistic.
+        """
+        # Calculate movement on horizontal plane
+        front_horizontal = np.array([self._front[0], 0.0, self._front[2]], dtype=np.float32)
+        if np.linalg.norm(front_horizontal) > 0:
+            front_horizontal = front_horizontal / np.linalg.norm(front_horizontal)
+
+        right_horizontal = np.array([self._right[0], 0.0, self._right[2]], dtype=np.float32)
+        if np.linalg.norm(right_horizontal) > 0:
+            right_horizontal = right_horizontal / np.linalg.norm(right_horizontal)
+
+        # Calculate desired direction based on input
+        desired_direction = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+        has_input = False
+
+        if self._move_forward:
+            desired_direction += front_horizontal
+            has_input = True
+        if self._move_backward:
+            desired_direction -= front_horizontal
+            has_input = True
+        if self._move_right:
+            desired_direction += right_horizontal
+            has_input = True
+        if self._move_left:
+            desired_direction -= right_horizontal
+            has_input = True
+        if self._move_up:
+            desired_direction += self._world_up
+            has_input = True
+        if self._move_down:
+            desired_direction -= self._world_up
+            has_input = True
+
+        # Normalize desired direction
+        if has_input:
+            desired_length = np.linalg.norm(desired_direction)
+            if desired_length > 0:
+                desired_direction = desired_direction / desired_length
+
+            # Accelerate towards desired direction
+            self.current_velocity += desired_direction * self.acceleration * delta_time
+
+            # Clamp to max speed
+            current_speed = np.linalg.norm(self.current_velocity)
+            if current_speed > self.max_speed:
+                self.current_velocity = (self.current_velocity / current_speed) * self.max_speed
+        else:
+            # Decelerate when no input
+            current_speed = np.linalg.norm(self.current_velocity)
+            if current_speed > 0.001:  # Small threshold to avoid jitter
+                # Decelerate
+                decel_amount = min(current_speed, self.deceleration * delta_time)
+                self.current_velocity -= (self.current_velocity / current_speed) * decel_amount
+            else:
+                # Stop completely
+                self.current_velocity = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+
+        # Apply velocity to position
+        self.position += self.current_velocity * delta_time
 
         # Apply collision
         if self.collision_enabled and self._heightmap is not None:
