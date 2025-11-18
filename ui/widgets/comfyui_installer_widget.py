@@ -66,6 +66,68 @@ class InstallationThread(QThread):
             self.finished.emit(False, f"Error: {str(e)}")
 
 
+class BatchInstallationThread(QThread):
+    """Thread for batch installation of multiple items"""
+    progress = Signal(int, int)  # current_item, total_items
+    item_progress = Signal(float, float, float)  # current_mb, total_mb, percentage
+    item_finished = Signal(bool, str, str)  # success, item_name, message
+    all_finished = Signal(int, int)  # success_count, total_count
+    log_message = Signal(str)
+
+    def __init__(self, installer: ComfyUIInstaller, items: list, item_type: str):
+        super().__init__()
+        self.installer = installer
+        self.items = items  # List of ModelInfo or CustomNodeInfo
+        self.item_type = item_type  # 'model' or 'node'
+        self.success_count = 0
+        self.failed_count = 0
+
+    def run(self):
+        total = len(self.items)
+        self.log_message.emit(f"Starting batch installation of {total} {self.item_type}s...")
+
+        for idx, item in enumerate(self.items, 1):
+            self.progress.emit(idx, total)
+
+            try:
+                if self.item_type == 'model':
+                    self.log_message.emit(f"[{idx}/{total}] Downloading {item.name}...")
+
+                    def progress_callback(current, tot, pct):
+                        self.item_progress.emit(current, tot, pct)
+
+                    success = self.installer.download_model(item, progress_callback)
+
+                elif self.item_type == 'node':
+                    self.log_message.emit(f"[{idx}/{total}] Installing {item.name}...")
+                    success = self.installer.install_custom_node(item)
+                else:
+                    success = False
+
+                if success:
+                    self.success_count += 1
+                    msg = f"✓ Successfully installed {item.name}"
+                    self.log_message.emit(msg)
+                    self.item_finished.emit(True, item.name, msg)
+                else:
+                    self.failed_count += 1
+                    msg = f"✗ Failed to install {item.name}"
+                    self.log_message.emit(msg)
+                    self.item_finished.emit(False, item.name, msg)
+
+            except Exception as e:
+                self.failed_count += 1
+                msg = f"✗ Error installing {item.name}: {str(e)}"
+                self.log_message.emit(msg)
+                self.item_finished.emit(False, item.name, msg)
+
+        # Final summary
+        self.log_message.emit(f"\nBatch installation complete:")
+        self.log_message.emit(f"  ✓ Success: {self.success_count}/{total}")
+        self.log_message.emit(f"  ✗ Failed: {self.failed_count}/{total}")
+        self.all_finished.emit(self.success_count, total)
+
+
 class ComfyUIInstallerWidget(QWidget):
     """
     Widget for managing ComfyUI installation
@@ -85,6 +147,7 @@ class ComfyUIInstallerWidget(QWidget):
 
         self.installer = ComfyUIInstaller()
         self.install_thread: Optional[InstallationThread] = None
+        self.batch_thread: Optional[BatchInstallationThread] = None
 
         self._init_ui()
         self._load_saved_path()
@@ -460,30 +523,59 @@ class ComfyUIInstallerWidget(QWidget):
 
     @Slot()
     def _install_all_models(self):
-        """Install all models (one by one)"""
-        QMessageBox.information(
+        """Install all models (one by one with queue)"""
+        # Check for missing models
+        missing_models = [model for model in self.installer.available_models.values()
+                          if not self.installer.is_model_installed(model)]
+
+        if not missing_models:
+            QMessageBox.information(self, "No Missing Models", "All models are already installed!")
+            return
+
+        # Confirm with user
+        reply = QMessageBox.question(
             self,
             "Batch Installation",
-            "This will install all missing models one by one.\n"
-            "This may take a while and require several GB of disk space.\n\n"
-            "Installation will start after clicking OK."
+            f"This will install {len(missing_models)} missing models:\n\n" +
+            "\n".join([f"  • {m.name}" for m in missing_models[:5]]) +
+            (f"\n  ... and {len(missing_models) - 5} more" if len(missing_models) > 5 else "") +
+            f"\n\nThis may take a while and require several GB of disk space.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No
         )
 
-        # TODO: Implement queue-based batch installation
-        self._log("Batch installation not yet implemented")
+        if reply != QMessageBox.Yes:
+            return
+
+        # Start batch installation
+        self._start_batch_installation(missing_models, 'model')
 
     @Slot()
     def _install_all_nodes(self):
-        """Install all custom nodes"""
-        QMessageBox.information(
+        """Install all custom nodes (one by one with queue)"""
+        # Check for missing nodes
+        missing_nodes = [node for node in self.installer.available_custom_nodes.values()
+                         if not self.installer.is_custom_node_installed(node)]
+
+        if not missing_nodes:
+            QMessageBox.information(self, "No Missing Nodes", "All custom nodes are already installed!")
+            return
+
+        # Confirm with user
+        reply = QMessageBox.question(
             self,
             "Batch Installation",
-            "This will install all missing custom nodes.\n"
-            "Installation will start after clicking OK."
+            f"This will install {len(missing_nodes)} missing custom nodes:\n\n" +
+            "\n".join([f"  • {n.name}" for n in missing_nodes[:5]]) +
+            (f"\n  ... and {len(missing_nodes) - 5} more" if len(missing_nodes) > 5 else "") +
+            f"\n\nThis may take a while.\n\nContinue?",
+            QMessageBox.Yes | QMessageBox.No
         )
 
-        # TODO: Implement queue-based batch installation
-        self._log("Batch installation not yet implemented")
+        if reply != QMessageBox.Yes:
+            return
+
+        # Start batch installation
+        self._start_batch_installation(missing_nodes, 'node')
 
     @Slot()
     def _install_selected_features(self):
@@ -539,6 +631,72 @@ class ComfyUIInstallerWidget(QWidget):
         else:
             self.progress_bar.setValue(0)
             self.progress_label.setText("✗ Failed")
+
+    def _start_batch_installation(self, items: list, item_type: str):
+        """Start batch installation of multiple items"""
+        # Check if already running
+        if self.batch_thread is not None and self.batch_thread.isRunning():
+            QMessageBox.warning(self, "Batch Installation Running",
+                                "A batch installation is already in progress.")
+            return
+
+        # Reset progress
+        self.progress_bar.setValue(0)
+        self.progress_label.setText(f"Installing 0/{len(items)} {item_type}s...")
+
+        # Create and configure batch thread
+        self.batch_thread = BatchInstallationThread(self.installer, items, item_type)
+
+        # Connect signals
+        self.batch_thread.progress.connect(self._batch_progress)
+        self.batch_thread.item_progress.connect(self._installation_progress)
+        self.batch_thread.item_finished.connect(self._batch_item_finished)
+        self.batch_thread.all_finished.connect(self._batch_all_finished)
+        self.batch_thread.log_message.connect(self._log)
+
+        # Start thread
+        self.batch_thread.start()
+        self._log(f"Starting batch installation of {len(items)} {item_type}s...")
+
+    @Slot(int, int)
+    def _batch_progress(self, current: int, total: int):
+        """Handle batch installation progress"""
+        pct = int((current / total) * 100)
+        self.progress_bar.setValue(pct)
+        self.progress_label.setText(f"Installing {current}/{total} items...")
+
+    @Slot(bool, str, str)
+    def _batch_item_finished(self, success: bool, item_name: str, message: str):
+        """Handle individual item completion in batch"""
+        # Log is already emitted by thread, just update tables
+        self._refresh_models()
+        self._refresh_nodes()
+
+    @Slot(int, int)
+    def _batch_all_finished(self, success_count: int, total: int):
+        """Handle batch installation completion"""
+        self.progress_bar.setValue(100)
+        self.progress_label.setText(f"✓ Batch complete: {success_count}/{total} successful")
+
+        # Show summary dialog
+        if success_count == total:
+            QMessageBox.information(
+                self, "Batch Installation Complete",
+                f"All {total} items installed successfully!"
+            )
+        else:
+            failed_count = total - success_count
+            QMessageBox.warning(
+                self, "Batch Installation Complete with Errors",
+                f"Installed: {success_count}/{total}\n"
+                f"Failed: {failed_count}/{total}\n\n"
+                f"Check the log for details."
+            )
+
+        # Final refresh
+        self._refresh_models()
+        self._refresh_nodes()
+        self.installation_complete.emit()
 
     def _log(self, message: str):
         """Add message to log"""

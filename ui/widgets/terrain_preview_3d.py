@@ -50,6 +50,7 @@ class TerrainPreview3DWidget(QWidget):
         self.heightmap: Optional[np.ndarray] = None
         self.terrain_mesh: Optional[gl.GLMeshItem] = None
         self.grid_item: Optional[gl.GLGridItem] = None
+        self.normals_lines: Optional[gl.GLLinePlotItem] = None
 
         # Camera state
         self.camera_distance = 100.0
@@ -62,6 +63,12 @@ class TerrainPreview3DWidget(QWidget):
         self.render_mode = 'solid'  # 'wireframe', 'solid', 'textured'
         self.show_grid = True
         self.show_normals = False
+
+        # Lighting settings
+        self.ambient_strength = 0.3
+        self.diffuse_strength = 0.7
+        self.light_direction = np.array([0.5, 0.5, 0.7])  # Directional light from top-right
+        self.light_direction = self.light_direction / np.linalg.norm(self.light_direction)
 
         self._init_ui()
 
@@ -238,8 +245,8 @@ class TerrainPreview3DWidget(QWidget):
 
         faces = np.array(faces)
 
-        # Calculate colors based on height
-        colors = self._calculate_vertex_colors(Z.flatten())
+        # Calculate colors based on height and lighting
+        colors = self._calculate_vertex_colors(X, Y, Z)
 
         # Create mesh
         mesh_data = gl.MeshData(
@@ -275,53 +282,181 @@ class TerrainPreview3DWidget(QWidget):
 
         logger.info(f"Terrain mesh updated: {vertices.shape[0]} vertices, {faces.shape[0]} faces")
 
-    def _calculate_vertex_colors(self, z_values: np.ndarray) -> np.ndarray:
+        # Update normals visualization if enabled
+        self._update_normals_visualization()
+
+    def _update_normals_visualization(self):
+        """Create or update normal vectors visualization"""
+        # Remove old normals
+        if self.normals_lines is not None:
+            self.gl_view.removeItem(self.normals_lines)
+            self.normals_lines = None
+
+        if not self.show_normals or self.heightmap is None:
+            return
+
+        h, w = self.heightmap.shape
+
+        # Subsample for performance (show normals every N vertices)
+        step = max(1, max(h, w) // 20)  # Show ~20x20 normals max
+
+        # Generate mesh vertices (same as in _update_terrain_mesh)
+        x = np.linspace(-50, 50, w)
+        y = np.linspace(-50, 50, h)
+        X, Y = np.meshgrid(x, y)
+        Z = self.heightmap * 50 * self.vertical_exaggeration
+
+        # Calculate normals using finite differences
+        # Normal = cross product of tangent vectors
+        normals = np.zeros((h, w, 3))
+
+        for i in range(1, h - 1):
+            for j in range(1, w - 1):
+                # Tangent in X direction
+                dx = x[j+1] - x[j-1]
+                dz_dx = Z[i, j+1] - Z[i, j-1]
+                tx = np.array([dx, 0, dz_dx])
+
+                # Tangent in Y direction
+                dy = y[i+1] - y[i-1]
+                dz_dy = Z[i+1, j] - Z[i-1, j]
+                ty = np.array([0, dy, dz_dy])
+
+                # Normal = cross product
+                normal = np.cross(tx, ty)
+                norm = np.linalg.norm(normal)
+                if norm > 0:
+                    normal /= norm
+
+                normals[i, j] = normal
+
+        # Create line segments for normals (subsampled)
+        line_segments = []
+        normal_length = 5.0  # Length of normal vectors for visualization
+
+        for i in range(0, h, step):
+            for j in range(0, w, step):
+                # Start point (vertex position)
+                start = np.array([X[i, j], Y[i, j], Z[i, j]])
+
+                # End point (start + normal * length)
+                end = start + normals[i, j] * normal_length
+
+                # Add line segment
+                line_segments.append(start)
+                line_segments.append(end)
+
+        if len(line_segments) > 0:
+            line_segments = np.array(line_segments)
+
+            # Create line plot item for normals
+            self.normals_lines = gl.GLLinePlotItem(
+                pos=line_segments,
+                color=(1.0, 0.0, 0.0, 0.8),  # Red color
+                width=1.5,
+                mode='lines'
+            )
+
+            self.gl_view.addItem(self.normals_lines)
+
+            logger.info(f"Normals visualization updated: {len(line_segments)//2} normals displayed")
+
+    def _calculate_vertex_colors(self, X: np.ndarray, Y: np.ndarray, Z: np.ndarray) -> np.ndarray:
         """
-        Calculate vertex colors based on elevation
+        Calculate vertex colors based on elevation and lighting (Phong shading)
+
+        Args:
+            X, Y, Z: 2D arrays of vertex coordinates (heightmap shape)
 
         Returns:
             Array of shape (N, 4) with RGBA colors
         """
-        # Normalize Z to [0, 1]
-        z_min, z_max = z_values.min(), z_values.max()
-        if z_max > z_min:
-            z_norm = (z_values - z_min) / (z_max - z_min)
-        else:
-            z_norm = np.zeros_like(z_values)
+        h, w = Z.shape
 
-        # Color gradient: blue (low) → green → brown → white (high)
-        colors = np.zeros((len(z_values), 4))
+        # Normalize Z to [0, 1] for base color
+        z_min, z_max = Z.min(), Z.max()
+        if z_max > z_min:
+            z_norm = (Z - z_min) / (z_max - z_min)
+        else:
+            z_norm = np.zeros_like(Z)
+
+        # Base colors from elevation (same gradient as before)
+        base_colors = np.zeros((h, w, 3))
 
         # Blue for low areas (water/valleys)
         mask_low = z_norm < 0.2
-        colors[mask_low, 0] = 0.2  # R
-        colors[mask_low, 1] = 0.4  # G
-        colors[mask_low, 2] = 0.7  # B
+        base_colors[mask_low, 0] = 0.2  # R
+        base_colors[mask_low, 1] = 0.4  # G
+        base_colors[mask_low, 2] = 0.7  # B
 
         # Green for mid-low (vegetation)
         mask_mid_low = (z_norm >= 0.2) & (z_norm < 0.4)
-        colors[mask_mid_low, 0] = 0.3
-        colors[mask_mid_low, 1] = 0.6
-        colors[mask_mid_low, 2] = 0.3
+        base_colors[mask_mid_low, 0] = 0.3
+        base_colors[mask_mid_low, 1] = 0.6
+        base_colors[mask_mid_low, 2] = 0.3
 
         # Brown for mid (rock)
         mask_mid = (z_norm >= 0.4) & (z_norm < 0.7)
-        t = (z_norm[mask_mid] - 0.4) / 0.3
-        colors[mask_mid, 0] = 0.3 + t * 0.3  # R: 0.3 → 0.6
-        colors[mask_mid, 1] = 0.6 - t * 0.3  # G: 0.6 → 0.3
-        colors[mask_mid, 2] = 0.3 - t * 0.2  # B: 0.3 → 0.1
+        t_mid = np.zeros_like(z_norm)
+        t_mid[mask_mid] = (z_norm[mask_mid] - 0.4) / 0.3
+        base_colors[mask_mid, 0] = 0.3 + t_mid[mask_mid] * 0.3
+        base_colors[mask_mid, 1] = 0.6 - t_mid[mask_mid] * 0.3
+        base_colors[mask_mid, 2] = 0.3 - t_mid[mask_mid] * 0.2
 
         # White for high (snow)
         mask_high = z_norm >= 0.7
-        t = (z_norm[mask_high] - 0.7) / 0.3
-        colors[mask_high, 0] = 0.6 + t * 0.4  # R: 0.6 → 1.0
-        colors[mask_high, 1] = 0.3 + t * 0.7  # G: 0.3 → 1.0
-        colors[mask_high, 2] = 0.1 + t * 0.9  # B: 0.1 → 1.0
+        t_high = np.zeros_like(z_norm)
+        t_high[mask_high] = (z_norm[mask_high] - 0.7) / 0.3
+        base_colors[mask_high, 0] = 0.6 + t_high[mask_high] * 0.4
+        base_colors[mask_high, 1] = 0.3 + t_high[mask_high] * 0.7
+        base_colors[mask_high, 2] = 0.1 + t_high[mask_high] * 0.9
 
-        # Alpha
-        colors[:, 3] = 1.0
+        # Calculate normals for lighting
+        normals = np.zeros((h, w, 3))
+        x = np.linspace(-50, 50, w)
+        y = np.linspace(-50, 50, h)
 
-        return colors
+        for i in range(1, h - 1):
+            for j in range(1, w - 1):
+                # Tangent in X direction
+                dx = x[j+1] - x[j-1]
+                dz_dx = Z[i, j+1] - Z[i, j-1]
+                tx = np.array([dx, 0, dz_dx])
+
+                # Tangent in Y direction
+                dy = y[i+1] - y[i-1]
+                dz_dy = Z[i+1, j] - Z[i-1, j]
+                ty = np.array([0, dy, dz_dy])
+
+                # Normal = cross product
+                normal = np.cross(tx, ty)
+                norm = np.linalg.norm(normal)
+                if norm > 0:
+                    normal /= norm
+
+                normals[i, j] = normal
+
+        # Apply Phong lighting (ambient + diffuse)
+        lit_colors = np.zeros_like(base_colors)
+
+        for i in range(h):
+            for j in range(w):
+                # Ambient component
+                ambient = self.ambient_strength * base_colors[i, j]
+
+                # Diffuse component (N · L)
+                diffuse_factor = max(0.0, np.dot(normals[i, j], self.light_direction))
+                diffuse = self.diffuse_strength * diffuse_factor * base_colors[i, j]
+
+                # Combined lighting
+                lit_colors[i, j] = np.clip(ambient + diffuse, 0.0, 1.0)
+
+        # Flatten and add alpha channel
+        final_colors = np.zeros((h * w, 4))
+        final_colors[:, :3] = lit_colors.reshape(-1, 3)
+        final_colors[:, 3] = 1.0
+
+        return final_colors
 
     @Slot(int)
     def _on_v_exag_changed(self, value: int):
@@ -347,7 +482,7 @@ class TerrainPreview3DWidget(QWidget):
     def _on_normals_toggled(self, checked: bool):
         """Toggle normals visibility"""
         self.show_normals = checked
-        # TODO: Implement normal visualization
+        self._update_normals_visualization()
 
     @Slot()
     def _reset_camera(self):
@@ -378,13 +513,14 @@ class TerrainPreview3DWidget(QWidget):
     @Slot()
     def _update_lighting(self):
         """Update lighting parameters"""
-        ambient = self.ambient_slider.value() / 100.0
-        diffuse = self.diffuse_slider.value() / 100.0
+        self.ambient_strength = self.ambient_slider.value() / 100.0
+        self.diffuse_strength = self.diffuse_slider.value() / 100.0
 
-        # TODO: Apply lighting to mesh shader
-        # This requires custom shader setup in pyqtgraph
+        # Regenerate mesh with new lighting
+        if self.heightmap is not None:
+            self._update_terrain_mesh()
 
-        logger.debug(f"Lighting: ambient={ambient:.2f}, diffuse={diffuse:.2f}")
+        logger.debug(f"Lighting updated: ambient={self.ambient_strength:.2f}, diffuse={self.diffuse_strength:.2f}")
 
     def _format_camera_info(self) -> str:
         """Format camera info string"""

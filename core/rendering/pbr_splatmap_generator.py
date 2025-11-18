@@ -723,18 +723,59 @@ class PBRSplatmapGenerator:
 
         elif format == 'exr':
             # Export EXR 32-bit
-            import OpenEXR
-            import Imath
+            try:
+                import OpenEXR
+                import Imath
 
-            # Convert to float32
-            splatmap1_float = splatmap1.astype(np.float32) / 255.0
-            splatmap2_float = splatmap2.astype(np.float32) / 255.0
+                # Convert to float32 [0-1]
+                splatmap1_float = splatmap1.astype(np.float32) / 255.0
+                splatmap2_float = splatmap2.astype(np.float32) / 255.0
 
-            # TODO: Implémenter export EXR si OpenEXR disponible
-            logger.warning("Export EXR nécessite OpenEXR, export PNG à la place")
+                h, w = splatmap1.shape[:2]
 
-            # Fallback PNG
-            self.export_splatmaps(splatmap1, splatmap2, output_dir, prefix, format='png')
+                # Create EXR headers
+                header = OpenEXR.Header(w, h)
+                header['channels'] = {
+                    'R': Imath.Channel(Imath.PixelType(Imath.PixelType.FLOAT)),
+                    'G': Imath.Channel(Imath.PixelType(Imath.PixelType.FLOAT)),
+                    'B': Imath.Channel(Imath.PixelType(Imath.PixelType.FLOAT)),
+                    'A': Imath.Channel(Imath.PixelType(Imath.PixelType.FLOAT))
+                }
+
+                # Export splatmap1 (layers 0-3)
+                exr_path1 = output_path / f"{prefix}_splatmap_0-3.exr"
+                exr_file1 = OpenEXR.OutputFile(str(exr_path1), header)
+
+                r1 = splatmap1_float[:, :, 0].tobytes()
+                g1 = splatmap1_float[:, :, 1].tobytes()
+                b1 = splatmap1_float[:, :, 2].tobytes()
+                a1 = splatmap1_float[:, :, 3].tobytes()
+
+                exr_file1.writePixels({'R': r1, 'G': g1, 'B': b1, 'A': a1})
+                exr_file1.close()
+
+                # Export splatmap2 (layers 4-7)
+                exr_path2 = output_path / f"{prefix}_splatmap_4-7.exr"
+                exr_file2 = OpenEXR.OutputFile(str(exr_path2), header)
+
+                r2 = splatmap2_float[:, :, 0].tobytes()
+                g2 = splatmap2_float[:, :, 1].tobytes()
+                b2 = splatmap2_float[:, :, 2].tobytes()
+                a2 = splatmap2_float[:, :, 3].tobytes()
+
+                exr_file2.writePixels({'R': r2, 'G': g2, 'B': b2, 'A': a2})
+                exr_file2.close()
+
+                logger.info(f"Splatmaps exportées en EXR 32-bit dans {output_dir}")
+
+            except ImportError:
+                logger.warning("OpenEXR non disponible, export PNG à la place")
+                # Fallback PNG
+                self.export_splatmaps(splatmap1, splatmap2, output_dir, prefix, format='png')
+            except Exception as e:
+                logger.error(f"Erreur export EXR: {e}, fallback PNG")
+                # Fallback PNG
+                self.export_splatmaps(splatmap1, splatmap2, output_dir, prefix, format='png')
 
     def export_material_info(self, output_path: str):
         """

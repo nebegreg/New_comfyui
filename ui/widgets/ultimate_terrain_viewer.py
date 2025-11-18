@@ -21,10 +21,11 @@ from PySide6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLabel, QPushButton, QSlider, QComboBox, QCheckBox, QGroupBox,
     QSpinBox, QDoubleSpinBox, QFileDialog, QMessageBox, QProgressBar,
-    QTabWidget, QTextEdit, QSplitter
+    QTabWidget, QTextEdit, QSplitter, QDialog, QTableWidget, QTableWidgetItem,
+    QHeaderView, QProgressDialog, QApplication
 )
-from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtCore import Qt, QTimer, Signal, QThread
+from PySide6.QtGui import QFont, QKeySequence, QShortcut, QAction
 
 try:
     from ui.widgets.advanced_terrain_viewer import AdvancedTerrainViewer, OPENGL_AVAILABLE
@@ -36,6 +37,62 @@ from core.terrain.heightmap_generator_v2 import HeightmapGeneratorV2
 from core.terrain.advanced_algorithms import spectral_synthesis, stream_power_erosion, MOUNTAIN_PRESETS
 
 logger = logging.getLogger(__name__)
+
+
+class KeyboardShortcutsDialog(QDialog):
+    """Dialog showing keyboard shortcuts."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Keyboard Shortcuts")
+        self.resize(500, 400)
+
+        layout = QVBoxLayout(self)
+
+        # Title
+        title = QLabel("<h2>Keyboard Shortcuts</h2>")
+        layout.addWidget(title)
+
+        # Shortcuts table
+        table = QTableWidget()
+        table.setColumnCount(2)
+        table.setHorizontalHeaderLabels(["Shortcut", "Action"])
+        table.horizontalHeader().setStretchLastSection(True)
+        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.setSelectionMode(QTableWidget.NoSelection)
+
+        shortcuts = [
+            ("W / A / S / D", "Move camera forward / left / backward / right"),
+            ("Space", "Move camera up"),
+            ("Shift", "Move camera down"),
+            ("Mouse", "Look around (click in viewport to capture mouse)"),
+            ("R", "Reset camera to initial position"),
+            ("C", "Toggle terrain collision on/off"),
+            ("Escape", "Release mouse capture"),
+            ("F1", "Show this keyboard shortcuts dialog"),
+            ("F11", "Toggle fullscreen mode"),
+            ("", ""),  # Separator
+            ("Tab", "Switch between control panel tabs"),
+            ("Ctrl + S", "Export terrain (from Export tab)"),
+            ("Ctrl + P", "Capture screenshot"),
+        ]
+
+        table.setRowCount(len(shortcuts))
+        for row, (key, action) in enumerate(shortcuts):
+            key_item = QTableWidgetItem(key)
+            key_item.setFont(QFont("Monospace", 10, QFont.Bold))
+            action_item = QTableWidgetItem(action)
+
+            table.setItem(row, 0, key_item)
+            table.setItem(row, 1, action_item)
+
+        layout.addWidget(table)
+
+        # Close button
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        layout.addWidget(close_btn)
 
 
 class UltimateTerrainViewer(QMainWindow):
@@ -79,7 +136,40 @@ class UltimateTerrainViewer(QMainWindow):
         self._fps_timer.timeout.connect(self._update_fps_display)
         self._fps_timer.start(500)  # Update FPS every 0.5s
 
+        # Setup keyboard shortcuts
+        self._setup_shortcuts()
+
         logger.info("Ultimate Terrain Viewer initialized")
+
+    def _setup_shortcuts(self):
+        """Setup global keyboard shortcuts."""
+        # F1 - Show keyboard shortcuts
+        help_shortcut = QShortcut(QKeySequence(Qt.Key_F1), self)
+        help_shortcut.activated.connect(self._show_shortcuts_dialog)
+
+        # F11 - Toggle fullscreen
+        fullscreen_shortcut = QShortcut(QKeySequence(Qt.Key_F11), self)
+        fullscreen_shortcut.activated.connect(self._toggle_fullscreen)
+
+        # Ctrl+S - Export (if terrain exists)
+        export_shortcut = QShortcut(QKeySequence.Save, self)
+        export_shortcut.activated.connect(self._on_export_terrain)
+
+        # Ctrl+P - Screenshot
+        screenshot_shortcut = QShortcut(QKeySequence.Print, self)
+        screenshot_shortcut.activated.connect(self._on_screenshot)
+
+    def _show_shortcuts_dialog(self):
+        """Show keyboard shortcuts dialog."""
+        dialog = KeyboardShortcutsDialog(self)
+        dialog.exec()
+
+    def _toggle_fullscreen(self):
+        """Toggle fullscreen mode."""
+        if self.isFullScreen():
+            self.showNormal()
+        else:
+            self.showFullScreen()
 
     def _setup_ui(self):
         """Setup complete UI."""
@@ -164,11 +254,20 @@ class UltimateTerrainViewer(QMainWindow):
             "Grand Canyon",
             "Rocky Mountains"
         ])
+        self.preset_combo.setToolTip(
+            "Select a mountain preset with predefined parameters.\n"
+            "Each preset uses different terrain generation algorithms."
+        )
         preset_layout.addWidget(QLabel("Preset:"))
         preset_layout.addWidget(self.preset_combo)
 
         generate_btn = QPushButton("Generate Terrain")
         generate_btn.clicked.connect(self._on_generate_terrain)
+        generate_btn.setToolTip(
+            "Generate terrain using selected preset and parameters.\n"
+            "Time: ~5-30 seconds depending on size.\n"
+            "Larger sizes take longer but provide more detail."
+        )
         preset_layout.addWidget(generate_btn)
 
         layout.addWidget(preset_group)
@@ -183,6 +282,12 @@ class UltimateTerrainViewer(QMainWindow):
         self.size_spin.setRange(128, 2048)
         self.size_spin.setValue(512)
         self.size_spin.setSingleStep(128)
+        self.size_spin.setToolTip(
+            "Terrain resolution (size x size).\n"
+            "128-512: Fast generation, lower detail\n"
+            "1024: Good balance of detail and performance\n"
+            "2048: High detail, slower generation"
+        )
         params_layout.addWidget(self.size_spin, 0, 1)
 
         # Terrain scale
@@ -191,6 +296,11 @@ class UltimateTerrainViewer(QMainWindow):
         self.terrain_scale_spin.setRange(10.0, 1000.0)
         self.terrain_scale_spin.setValue(100.0)
         self.terrain_scale_spin.setSingleStep(10.0)
+        self.terrain_scale_spin.setToolTip(
+            "Horizontal scale of terrain in world units.\n"
+            "Affects how spread out the terrain appears.\n"
+            "Larger values = wider terrain area."
+        )
         params_layout.addWidget(self.terrain_scale_spin, 1, 1)
 
         # Height scale
@@ -198,6 +308,11 @@ class UltimateTerrainViewer(QMainWindow):
         self.height_scale_spin = QDoubleSpinBox()
         self.height_scale_spin.setRange(1.0, 100.0)
         self.height_scale_spin.setValue(20.0)
+        self.height_scale_spin.setToolTip(
+            "Vertical scale of terrain (mountain height).\n"
+            "Higher values = taller mountains.\n"
+            "Recommended: 10-30 for realistic proportions."
+        )
         self.height_scale_spin.setSingleStep(5.0)
         params_layout.addWidget(self.height_scale_spin, 2, 1)
 
@@ -358,6 +473,12 @@ class UltimateTerrainViewer(QMainWindow):
         self.camera_speed_slider.setRange(1, 100)
         self.camera_speed_slider.setValue(int(self.viewer._camera.speed))
         self.camera_speed_slider.valueChanged.connect(self._on_camera_speed_changed)
+        self.camera_speed_slider.setToolTip(
+            "Camera movement speed (units per second).\n"
+            "Uses smooth acceleration for professional feel.\n"
+            "Low (1-20): Slow, precise movement\n"
+            "High (50-100): Fast exploration"
+        )
         settings_layout.addWidget(self.camera_speed_slider, 0, 1)
 
         settings_layout.addWidget(QLabel("Sensitivity:"), 1, 0)
@@ -365,6 +486,11 @@ class UltimateTerrainViewer(QMainWindow):
         self.camera_sens_slider.setRange(1, 50)
         self.camera_sens_slider.setValue(int(self.viewer._camera.sensitivity * 100))
         self.camera_sens_slider.valueChanged.connect(self._on_camera_sens_changed)
+        self.camera_sens_slider.setToolTip(
+            "Mouse look sensitivity.\n"
+            "Low (1-10): Slow, precise control\n"
+            "High (30-50): Fast looking"
+        )
         settings_layout.addWidget(self.camera_sens_slider, 1, 1)
 
         layout.addWidget(settings_group)
@@ -376,6 +502,11 @@ class UltimateTerrainViewer(QMainWindow):
         self.collision_check = QCheckBox("Enable Terrain Collision")
         self.collision_check.setChecked(True)
         self.collision_check.toggled.connect(self._on_collision_toggled)
+        self.collision_check.setToolTip(
+            "Keep camera above terrain surface.\n"
+            "When enabled, camera cannot go below ground.\n"
+            "Disable for free flying through terrain."
+        )
         collision_layout.addWidget(self.collision_check)
 
         layout.addWidget(collision_group)
@@ -383,6 +514,10 @@ class UltimateTerrainViewer(QMainWindow):
         # Reset button
         reset_btn = QPushButton("Reset Camera (R)")
         reset_btn.clicked.connect(lambda: self.viewer._camera.reset())
+        reset_btn.setToolTip(
+            "Reset camera to initial position and orientation.\n"
+            "Shortcut: Press R key in viewport"
+        )
         layout.addWidget(reset_btn)
 
         layout.addStretch()
@@ -405,6 +540,12 @@ class UltimateTerrainViewer(QMainWindow):
             "Sunset", "Twilight", "Night"
         ])
         self.hdri_time_combo.setCurrentIndex(2)  # Midday
+        self.hdri_time_combo.setToolTip(
+            "Select time of day for lighting.\n"
+            "Sunrise/Sunset: Warm colors (2000-2500K)\n"
+            "Midday: Neutral daylight (6500K)\n"
+            "Night: Cool moonlight (10000K)"
+        )
         gen_layout.addWidget(self.hdri_time_combo)
 
         gen_layout.addWidget(QLabel("Resolution:"))
@@ -415,16 +556,33 @@ class UltimateTerrainViewer(QMainWindow):
             "8192x4096 (High)"
         ])
         self.hdri_res_combo.setCurrentIndex(1)
+        self.hdri_res_combo.setToolTip(
+            "HDRI panorama resolution.\n"
+            "Low: Fast generation (~3s), good for preview\n"
+            "Medium: Balanced quality (~8s), recommended\n"
+            "High: Best quality (~30s), production-ready"
+        )
         gen_layout.addWidget(self.hdri_res_combo)
 
         gen_layout.addWidget(QLabel("Cloud Density:"))
         self.cloud_density_slider = QSlider(Qt.Horizontal)
         self.cloud_density_slider.setRange(0, 100)
         self.cloud_density_slider.setValue(30)
+        self.cloud_density_slider.setToolTip(
+            "Amount of clouds in the sky.\n"
+            "0% = Clear sky\n"
+            "50% = Partly cloudy\n"
+            "100% = Overcast"
+        )
         gen_layout.addWidget(self.cloud_density_slider)
 
         if AI_AVAILABLE:
             self.ai_enhance_check = QCheckBox("AI Enhancement (requires 10+ GB VRAM)")
+            self.ai_enhance_check.setToolTip(
+                "Use AI (Stable Diffusion XL) to enhance HDRI quality.\n"
+                "WARNING: Requires 10+ GB VRAM and takes ~90 seconds.\n"
+                "Adds photorealistic clouds and atmospheric details."
+            )
             gen_layout.addWidget(self.ai_enhance_check)
 
         self.hdri_progress = QProgressBar()
@@ -433,6 +591,14 @@ class UltimateTerrainViewer(QMainWindow):
 
         generate_hdri_btn = QPushButton("Generate HDRI")
         generate_hdri_btn.clicked.connect(self._on_generate_hdri)
+        generate_hdri_btn.setToolTip(
+            "Generate procedural HDRI skybox with enhanced quality.\n"
+            "Uses V2 improvements:\n"
+            "- Physically-based atmospheric scattering\n"
+            "- Color temperature simulation\n"
+            "- True HDR range (up to 100+)\n"
+            "Output saved to ~/mountain_studio_hdri/"
+        )
         gen_layout.addWidget(generate_hdri_btn)
 
         layout.addWidget(gen_group)
@@ -483,33 +649,65 @@ class UltimateTerrainViewer(QMainWindow):
     # ========== Event Handlers ==========
 
     def _on_generate_terrain(self):
-        """Generate terrain from preset."""
+        """Generate terrain from preset with progress feedback."""
         size = self.size_spin.value()
         preset_name = self.preset_combo.currentText().lower().replace(" ", "_")
 
+        # Estimate generation time
+        time_estimate = size // 256  # Rough estimate in seconds
+
+        # Create progress dialog
+        progress = QProgressDialog(
+            f"Generating {preset_name} terrain ({size}x{size})...\n"
+            f"Estimated time: ~{time_estimate}-{time_estimate*2} seconds",
+            "Cancel", 0, 100, self
+        )
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setWindowTitle("Generating Terrain")
+        progress.setMinimumDuration(500)  # Show after 0.5s
+
         self.statusBar().showMessage(f"Generating {preset_name} terrain...")
+        progress.setValue(10)
+        QApplication.processEvents()
 
         try:
             if preset_name == "custom":
                 # Simple spectral synthesis
+                progress.setLabelText("Generating base terrain with spectral synthesis...")
+                QApplication.processEvents()
                 heightmap = spectral_synthesis(size, beta=2.0, seed=42)
             else:
                 # Use preset
                 if preset_name in MOUNTAIN_PRESETS:
+                    progress.setLabelText(f"Generating {preset_name} terrain...")
+                    progress.setValue(20)
+                    QApplication.processEvents()
+
                     from core.terrain.advanced_algorithms import combine_algorithms
                     heightmap = combine_algorithms(size, **MOUNTAIN_PRESETS[preset_name], seed=42)
                 else:
                     heightmap = spectral_synthesis(size, beta=2.0, seed=42)
 
+            if progress.wasCanceled():
+                self.statusBar().showMessage("Terrain generation canceled", 3000)
+                return
+
+            progress.setLabelText("Updating viewer...")
+            progress.setValue(90)
+            QApplication.processEvents()
+
             self._current_heightmap = heightmap
             self._update_terrain()
 
-            self.statusBar().showMessage(f"Terrain generated: {size}x{size}", 3000)
+            progress.setValue(100)
+            self.statusBar().showMessage(f"Terrain generated: {size}x{size} ({preset_name})", 5000)
 
         except Exception as e:
             logger.error(f"Terrain generation failed: {e}")
             QMessageBox.critical(self, "Error", f"Terrain generation failed:\n{str(e)}")
             self.statusBar().showMessage("Generation failed", 3000)
+        finally:
+            progress.close()
 
     def _on_load_heightmap(self):
         """Load heightmap from file."""
@@ -623,10 +821,12 @@ class UltimateTerrainViewer(QMainWindow):
             if self._hdri_generator is None or self._hdri_generator.resolution != resolution:
                 self._hdri_generator = HDRIPanoramicGenerator(resolution)
 
-            # Generate
-            hdri = self._hdri_generator.generate_procedural(
+            # Generate with enhanced V2 (better atmospheric scattering, color temperature)
+            hdri = self._hdri_generator.generate_procedural_enhanced(
                 time_of_day=time_of_day,
-                cloud_density=cloud_density
+                cloud_density=cloud_density,
+                atmosphere_strength=1.0,  # Full atmospheric scattering
+                seed=None  # Random seed for variety
             )
 
             # Save preview
