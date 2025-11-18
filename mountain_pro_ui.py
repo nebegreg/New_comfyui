@@ -250,6 +250,10 @@ class MountainProUI(QMainWindow):
         self.sd_direct = None
         self.video_manager = None
 
+        # 3D View state
+        self.terrain_surface = None
+        self.wireframe_mode = False
+
         self.init_ui()
 
     def init_ui(self):
@@ -918,16 +922,21 @@ class MountainProUI(QMainWindow):
 
         # Créer mesh
         z = h_sub * 20  # Amplifier la hauteur pour visualisation
-        surface = gl.GLSurfacePlotItem(
+        self.terrain_surface = gl.GLSurfacePlotItem(
             z=z,
             shader='heightColor',
             computeNormals=True,
             smooth=True
         )
-        surface.scale(1, 1, 1)
-        surface.translate(-h_sub.shape[0]/2, -h_sub.shape[1]/2, 0)
+        self.terrain_surface.scale(1, 1, 1)
+        self.terrain_surface.translate(-h_sub.shape[0]/2, -h_sub.shape[1]/2, 0)
 
-        self.gl_view.addItem(surface)
+        # Apply wireframe mode if enabled
+        if self.wireframe_mode:
+            self.terrain_surface.setGLOptions('additive')
+            self.terrain_surface.shader().setUniformValue('drawEdges', True)
+
+        self.gl_view.addItem(self.terrain_surface)
 
         # Grille
         grid = gl.GLGridItem()
@@ -940,8 +949,27 @@ class MountainProUI(QMainWindow):
 
     def toggle_wireframe(self):
         """Toggle wireframe mode"""
-        # TODO
-        pass
+        if self.terrain_surface is None:
+            return
+
+        self.wireframe_mode = not self.wireframe_mode
+
+        # For pyqtgraph GLSurfacePlotItem, we need to set drawMode
+        # 'lines' for wireframe, 'triangles' for solid
+        if hasattr(self.terrain_surface, 'opts'):
+            if self.wireframe_mode:
+                # Enable wireframe
+                self.terrain_surface.opts['drawEdges'] = True
+                self.terrain_surface.opts['drawFaces'] = False
+            else:
+                # Disable wireframe (solid mode)
+                self.terrain_surface.opts['drawEdges'] = False
+                self.terrain_surface.opts['drawFaces'] = True
+
+            # Force update
+            self.terrain_surface.meshDataChanged()
+
+        logger.info(f"Wireframe mode: {'ON' if self.wireframe_mode else 'OFF'}")
 
     def toggle_preset_mode(self, state):
         """Toggle preset mode ON/OFF"""
