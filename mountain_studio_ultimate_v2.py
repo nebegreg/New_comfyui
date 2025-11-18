@@ -71,7 +71,7 @@ except ImportError:
 
 # Import core modules from existing codebase
 try:
-    from core.ai.comfyui_integration import ComfyUIClient, generate_pbr_textures_complete
+    from core.ai.comfyui_integration import ComfyUIClient, generate_complete_pbr_set
     COMFYUI_AVAILABLE = True
 except ImportError:
     COMFYUI_AVAILABLE = False
@@ -1158,7 +1158,7 @@ class MountainStudioUltimate(QMainWindow):
 
         # Convert to image
         terrain_uint8 = (self.terrain * 255).astype(np.uint8)
-        img = Image.fromarray(terrain_uint8, mode='L')
+        img = Image.fromarray(terrain_uint8)
 
         # Apply colormap
         img_rgb = img.convert('RGB')
@@ -1257,9 +1257,9 @@ class MountainStudioUltimate(QMainWindow):
                 if map_name == 'diffuse':
                     img = Image.fromarray((map_data * 255).astype(np.uint8))
                 elif map_name == 'normal':
-                    img = Image.fromarray(map_data.astype(np.uint8), mode='RGB')
+                    img = Image.fromarray(map_data.astype(np.uint8))
                 else:
-                    img = Image.fromarray((map_data * 255).astype(np.uint8), mode='L')
+                    img = Image.fromarray((map_data * 255).astype(np.uint8))
 
                 filepath = f"{output_prefix}_{map_name}.png"
                 img.save(filepath)
@@ -1333,8 +1333,9 @@ class MountainStudioUltimate(QMainWindow):
         try:
             filepath = self.output_dir / "heightmap_16bit.png"
             terrain_uint16 = (self.terrain * 65535).astype(np.uint16)
-            img = Image.fromarray(terrain_uint16, mode='I;16')
-            img.save(filepath)
+            # For 16-bit, we need to use 'I' mode explicitly during save
+            img = Image.fromarray(terrain_uint16)
+            img.save(filepath, format='PNG', bits=16)
             self.log(f"💾 Exported PNG: {filepath}")
             QMessageBox.information(self, "Success", f"Heightmap exported:\n{filepath}")
         except Exception as e:
