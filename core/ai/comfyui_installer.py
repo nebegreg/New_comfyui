@@ -18,7 +18,16 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
 import hashlib
-from tqdm import tqdm
+
+# Try to import tqdm, but make it optional
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+    def tqdm(iterable, **kwargs):
+        """Dummy tqdm if not available"""
+        return iterable
 
 logger = logging.getLogger(__name__)
 
