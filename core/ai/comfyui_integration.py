@@ -19,6 +19,8 @@ import io
 import logging
 from typing import Dict, List, Optional, Tuple
 from PIL import Image
+import cv2
+from scipy.ndimage import gaussian_filter
 
 logger = logging.getLogger(__name__)
 
@@ -240,6 +242,141 @@ def create_pbr_workflow(
     return workflow
 
 
+def generate_normal_map_from_diffuse(diffuse: np.ndarray, strength: float = 1.0) -> np.ndarray:
+    """
+    Generate normal map from diffuse texture using Sobel edge detection
+
+    Args:
+        diffuse: RGB diffuse image (H, W, 3) in range [0, 255] or [0, 1]
+        strength: Normal map strength multiplier
+
+    Returns:
+        Normal map (H, W, 3) with RGB encoding of surface normals
+    """
+    # Convert to grayscale
+    if diffuse.max() > 1.0:
+        gray = cv2.cvtColor(diffuse.astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32)
+    else:
+        gray = cv2.cvtColor((diffuse * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32)
+
+    # Apply Sobel filters to get gradients
+    sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+
+    # Calculate normal vectors
+    # For a height map h(x,y), normal = normalize([-dh/dx, -dh/dy, 1])
+    normal_x = -sobel_x * strength
+    normal_y = -sobel_y * strength
+    normal_z = np.ones_like(gray) * 255.0
+
+    # Stack into RGB
+    normal_map = np.stack([normal_x, normal_y, normal_z], axis=-1)
+
+    # Normalize to unit vectors
+    magnitude = np.sqrt(np.sum(normal_map ** 2, axis=-1, keepdims=True))
+    magnitude = np.maximum(magnitude, 1e-6)  # Avoid division by zero
+    normal_map = normal_map / magnitude
+
+    # Convert to [0, 255] range (standard normal map encoding: 0.5 = no normal)
+    normal_map = ((normal_map + 1.0) * 0.5 * 255.0).astype(np.uint8)
+
+    return normal_map
+
+
+def generate_roughness_map_from_diffuse(diffuse: np.ndarray) -> np.ndarray:
+    """
+    Generate roughness map from diffuse texture based on local variance
+
+    Args:
+        diffuse: RGB diffuse image (H, W, 3)
+
+    Returns:
+        Roughness map (H, W) in range [0, 255]
+    """
+    # Convert to grayscale
+    if diffuse.max() > 1.0:
+        gray = cv2.cvtColor(diffuse.astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    else:
+        gray = cv2.cvtColor((diffuse * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+
+    # Calculate local variance (high variance = rough surface)
+    kernel_size = 5
+    mean = cv2.blur(gray, (kernel_size, kernel_size))
+    sqr_mean = cv2.blur(gray ** 2, (kernel_size, kernel_size))
+    variance = sqr_mean - mean ** 2
+    variance = np.clip(variance, 0, 1)
+
+    # Normalize variance to roughness [0, 1]
+    roughness = variance / (variance.max() + 1e-6)
+
+    # Add base roughness and contrast
+    roughness = 0.3 + roughness * 0.7  # Range [0.3, 1.0]
+
+    # Convert to [0, 255]
+    roughness = (roughness * 255).astype(np.uint8)
+
+    return roughness
+
+
+def generate_ao_map_from_diffuse(diffuse: np.ndarray) -> np.ndarray:
+    """
+    Generate ambient occlusion map from diffuse texture based on luminance
+
+    Args:
+        diffuse: RGB diffuse image (H, W, 3)
+
+    Returns:
+        AO map (H, W) in range [0, 255], where darker = more occluded
+    """
+    # Convert to grayscale (luminance)
+    if diffuse.max() > 1.0:
+        gray = cv2.cvtColor(diffuse.astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    else:
+        gray = cv2.cvtColor((diffuse * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+
+    # Invert: darker areas in diffuse = more occluded
+    ao = 1.0 - gray
+
+    # Apply slight blur for smoother AO
+    ao = gaussian_filter(ao, sigma=2.0)
+
+    # Adjust contrast: AO should be subtle
+    ao = ao * 0.5 + 0.5  # Range [0.5, 1.0]
+
+    # Convert to [0, 255]
+    ao = (ao * 255).astype(np.uint8)
+
+    return ao
+
+
+def generate_height_map_from_diffuse(diffuse: np.ndarray) -> np.ndarray:
+    """
+    Generate height/displacement map from diffuse texture based on luminance
+
+    Args:
+        diffuse: RGB diffuse image (H, W, 3)
+
+    Returns:
+        Height map (H, W) in range [0, 255]
+    """
+    # Convert to grayscale (luminance = height)
+    if diffuse.max() > 1.0:
+        gray = cv2.cvtColor(diffuse.astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+    else:
+        gray = cv2.cvtColor((diffuse * 255).astype(np.uint8), cv2.COLOR_RGB2GRAY).astype(np.float32) / 255.0
+
+    # Apply slight blur to remove high-frequency noise
+    height = gaussian_filter(gray, sigma=1.0)
+
+    # Normalize to full range
+    height = (height - height.min()) / (height.max() - height.min() + 1e-6)
+
+    # Convert to [0, 255]
+    height = (height * 255).astype(np.uint8)
+
+    return height
+
+
 def generate_pbr_textures(
     prompt: str,
     width: int = 1024,
@@ -319,15 +456,37 @@ def generate_pbr_textures(
                         # Get the image
                         image = client.get_image(filename, subfolder)
                         if image is not None:
-                            # For now, return single image as diffuse
-                            # TODO: Generate separate PBR maps
-                            return {
-                                'diffuse': image[:, :, :3] if image.shape[2] > 3 else image,
-                                'normal': None,  # TODO: Generate from diffuse
-                                'roughness': None,
-                                'ao': None,
-                                'height': None
-                            }
+                            # Extract diffuse (RGB only)
+                            diffuse = image[:, :, :3] if image.shape[2] > 3 else image
+
+                            # Generate PBR maps from diffuse
+                            logger.info("Generating PBR maps from diffuse texture...")
+
+                            try:
+                                normal = generate_normal_map_from_diffuse(diffuse, strength=1.5)
+                                roughness = generate_roughness_map_from_diffuse(diffuse)
+                                ao = generate_ao_map_from_diffuse(diffuse)
+                                height = generate_height_map_from_diffuse(diffuse)
+
+                                logger.info("✓ PBR maps generated successfully")
+
+                                return {
+                                    'diffuse': diffuse,
+                                    'normal': normal,
+                                    'roughness': roughness,
+                                    'ao': ao,
+                                    'height': height
+                                }
+                            except Exception as e:
+                                logger.error(f"Failed to generate PBR maps: {e}")
+                                # Fallback: return diffuse only
+                                return {
+                                    'diffuse': diffuse,
+                                    'normal': None,
+                                    'roughness': None,
+                                    'ao': None,
+                                    'height': None
+                                }
 
             logger.warning("No images found in outputs")
             return None
