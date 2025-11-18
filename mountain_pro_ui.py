@@ -210,16 +210,143 @@ class GenerationThread(QThread):
         self.finished.emit(result, 'terrain')
 
     def generate_texture(self):
-        # Utiliser Stable Diffusion pour texturer
-        self.progress.emit(20, "Initialisation SD...")
-        # TODO: Implémenter
-        pass
+        """Generate AI texture using Stable Diffusion via ComfyUI"""
+        try:
+            # Get parameters
+            prompt = self.params.get('texture_prompt', 'photorealistic mountain terrain, high detail, 4K')
+            width = self.params.get('texture_width', 1024)
+            height = self.params.get('texture_height', 1024)
+            server_address = self.params.get('comfyui_server', '127.0.0.1:8188')
+            seed = self.params.get('seed', -1)
+
+            self.progress.emit(10, "Connecting to ComfyUI...")
+
+            # Generate PBR textures
+            self.progress.emit(30, "Generating textures with AI...")
+            logger.info(f"Generating texture: '{prompt}'")
+
+            textures = generate_pbr_textures(
+                prompt=prompt,
+                width=width,
+                height=height,
+                server_address=server_address,
+                seed=seed
+            )
+
+            if textures is None:
+                raise Exception("Failed to generate textures from ComfyUI")
+
+            self.progress.emit(90, "Processing results...")
+
+            # Store results
+            result = {
+                'diffuse': textures.get('diffuse'),
+                'normal': textures.get('normal'),
+                'roughness': textures.get('roughness'),
+                'ao': textures.get('ao'),
+                'height': textures.get('height'),
+                'prompt': prompt
+            }
+
+            self.progress.emit(100, "Texture generation complete!")
+            logger.info("✓ Texture generation successful")
+
+            self.finished.emit(result, 'texture')
+
+        except Exception as e:
+            logger.error(f"Texture generation failed: {e}")
+            self.progress.emit(0, f"Error: {str(e)}")
+            self.finished.emit(None, 'texture')
 
     def generate_video(self):
-        # Génération vidéo cohérente
-        self.progress.emit(10, "Préparation...")
-        # TODO: Implémenter
-        pass
+        """Generate coherent video using VideoCoherenceManager"""
+        try:
+            # Get parameters
+            num_frames = self.params.get('video_frames', 120)  # 4 seconds @ 30fps
+            fps = self.params.get('video_fps', 30)
+            movement_type = self.params.get('video_movement', 'orbit')  # orbit, flyover, pan, zoom
+            prompt = self.params.get('video_prompt', 'cinematic mountain landscape flyover')
+            resolution = self.params.get('video_resolution', 512)
+            server_address = self.params.get('comfyui_server', '127.0.0.1:8188')
+
+            self.progress.emit(5, "Initializing video generation...")
+
+            # Create video manager
+            video_manager = VideoCoherenceManager(
+                width=resolution,
+                height=resolution,
+                comfyui_server=server_address
+            )
+
+            self.progress.emit(15, f"Generating {num_frames} frames...")
+
+            # Generate frames with coherence
+            logger.info(f"Generating video: {num_frames} frames, {movement_type} movement")
+
+            frames = []
+            if movement_type == 'orbit':
+                # Orbital camera movement around terrain
+                frames = video_manager.generate_orbit_sequence(
+                    base_prompt=prompt,
+                    num_frames=num_frames,
+                    seed=self.params.get('seed', 42)
+                )
+            elif movement_type == 'flyover':
+                # Flyover movement
+                frames = video_manager.generate_flyover_sequence(
+                    base_prompt=prompt,
+                    num_frames=num_frames,
+                    seed=self.params.get('seed', 42)
+                )
+            else:
+                # Default: use simple camera params
+                camera_params = [
+                    {'angle': i * 360 / num_frames} for i in range(num_frames)
+                ]
+                frames = video_manager.generate_coherent_sequence(
+                    base_prompt=prompt,
+                    num_frames=num_frames,
+                    camera_params=camera_params,
+                    seed=self.params.get('seed', 42)
+                )
+
+            if not frames or len(frames) == 0:
+                raise Exception("No frames generated")
+
+            self.progress.emit(85, "Encoding video...")
+
+            # Create video generator
+            from video_generator import VideoGenerator
+            video_gen = VideoGenerator(width=resolution, height=resolution, fps=fps)
+
+            # Add all frames
+            for idx, frame in enumerate(frames):
+                if (idx % 10) == 0:
+                    progress = 85 + int((idx / len(frames)) * 10)
+                    self.progress.emit(progress, f"Encoding frame {idx+1}/{len(frames)}...")
+                video_gen.add_frame(frame)
+
+            # Save video
+            output_path = self.params.get('video_output', 'output/mountain_video.mp4')
+            video_gen.save(output_path)
+
+            self.progress.emit(100, "Video generation complete!")
+            logger.info(f"✓ Video saved: {output_path}")
+
+            result = {
+                'video_path': output_path,
+                'frames': frames,
+                'num_frames': len(frames),
+                'fps': fps,
+                'movement': movement_type
+            }
+
+            self.finished.emit(result, 'video')
+
+        except Exception as e:
+            logger.error(f"Video generation failed: {e}")
+            self.progress.emit(0, f"Error: {str(e)}")
+            self.finished.emit(None, 'video')
 
 
 class MountainProUI(QMainWindow):

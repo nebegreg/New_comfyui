@@ -16,6 +16,8 @@ from diffusers import (
     DDIMScheduler
 )
 from controlnet_aux import CannyDetector, OpenposeDetector, MidasDetector
+from scipy.ndimage import map_coordinates, rotate
+from scipy.interpolate import griddata
 import os
 
 
@@ -393,6 +395,89 @@ class VideoCoherenceManager:
 
         return all_frames
 
+    @staticmethod
+    def rotate_heightmap_3d(heightmap: np.ndarray, angle_degrees: float, axis: str = 'z') -> np.ndarray:
+        """
+        Rotate heightmap in 3D space around specified axis
+
+        Args:
+            heightmap: 2D heightmap array (H, W) with values [0, 1]
+            angle_degrees: Rotation angle in degrees
+            axis: Rotation axis ('x', 'y', or 'z')
+
+        Returns:
+            Rotated heightmap (H, W) interpolated back to 2D grid
+        """
+        h, w = heightmap.shape
+
+        # Create 3D coordinate grid
+        y_coords, x_coords = np.mgrid[0:h, 0:w]
+        z_coords = heightmap * h  # Scale height to image dimensions
+
+        # Center coordinates
+        x_centered = x_coords - w / 2
+        y_centered = y_coords - h / 2
+        z_centered = z_coords - (heightmap.max() * h) / 2
+
+        # Create rotation matrix
+        angle_rad = np.radians(angle_degrees)
+        cos_a = np.cos(angle_rad)
+        sin_a = np.sin(angle_rad)
+
+        if axis == 'y':
+            # Rotation around Y axis (most common for terrain viewing)
+            rot_matrix = np.array([
+                [cos_a, 0, sin_a],
+                [0, 1, 0],
+                [-sin_a, 0, cos_a]
+            ])
+        elif axis == 'x':
+            # Rotation around X axis
+            rot_matrix = np.array([
+                [1, 0, 0],
+                [0, cos_a, -sin_a],
+                [0, sin_a, cos_a]
+            ])
+        else:  # 'z' axis
+            # Rotation around Z axis (vertical)
+            rot_matrix = np.array([
+                [cos_a, -sin_a, 0],
+                [sin_a, cos_a, 0],
+                [0, 0, 1]
+            ])
+
+        # Stack coordinates
+        coords_3d = np.stack([x_centered.flatten(), y_centered.flatten(), z_centered.flatten()])
+
+        # Apply rotation
+        rotated_coords = rot_matrix @ coords_3d
+
+        # Extract rotated coordinates
+        x_rot = rotated_coords[0, :].reshape(h, w) + w / 2
+        y_rot = rotated_coords[1, :].reshape(h, w) + h / 2
+        z_rot = rotated_coords[2, :].reshape(h, w) + (heightmap.max() * h) / 2
+
+        # Project back to 2D grid using griddata interpolation
+        points = np.column_stack([x_rot.flatten(), y_rot.flatten()])
+        values = z_rot.flatten() / h  # Normalize back to [0, 1]
+
+        # Create output grid
+        grid_x, grid_y = np.mgrid[0:h, 0:w]
+
+        # Interpolate to regular grid
+        rotated_heightmap = griddata(
+            points,
+            values,
+            (grid_x, grid_y),
+            method='cubic',
+            fill_value=0.0
+        )
+
+        # Ensure valid range [0, 1]
+        rotated_heightmap = np.clip(rotated_heightmap, 0, 1)
+
+        return rotated_heightmap
+
     def generate_from_heightmap_rotation(self,
                                         heightmap: np.ndarray,
                                         base_prompt: str,
@@ -419,21 +504,40 @@ class VideoCoherenceManager:
         Returns:
             Frames de rotation
         """
-        # TODO: Implémenter la rotation réelle du heightmap en 3D
-        # Pour l'instant, on utilise le système de cohérence avec même heightmap
+        # Generate rotated heightmaps for each frame
+        rotated_heightmaps = []
+        camera_params = []
 
-        camera_params = [{'angle': i * 360 / num_frames} for i in range(num_frames)]
+        for i in range(num_frames):
+            angle = i * 360 / num_frames
 
-        return self.generate_coherent_video(
-            base_prompt=base_prompt,
-            negative_prompt=negative_prompt,
-            camera_params=camera_params,
-            heightmap_base=heightmap,
-            width=width,
-            height=height,
-            steps=steps,
-            seed=seed,
-            strength=0.2,  # Très faible pour cohérence maximale
-            interpolate=True,
-            interpolation_frames=1
-        )
+            # Rotate heightmap in 3D (around Y axis for orbital view)
+            rotated_hm = self.rotate_heightmap_3d(heightmap, angle, axis='y')
+            rotated_heightmaps.append(rotated_hm)
+
+            # Also update camera params for additional perspective
+            camera_params.append({'angle': angle, 'rotated_heightmap': rotated_hm})
+
+        # Generate video with rotated heightmaps
+        # Each frame uses a different rotated heightmap
+        frames = []
+
+        for i, (rotated_hm, cam_param) in enumerate(zip(rotated_heightmaps, camera_params)):
+            # Generate single frame with this rotated heightmap
+            frame_result = self.generate_coherent_video(
+                base_prompt=base_prompt,
+                negative_prompt=negative_prompt,
+                camera_params=[cam_param],  # Single frame
+                heightmap_base=rotated_hm,  # Use rotated heightmap
+                width=width,
+                height=height,
+                steps=steps,
+                seed=seed + i,  # Vary seed slightly for each frame
+                strength=0.2,  # Low strength for coherence
+                interpolate=False  # No interpolation (we have all frames)
+            )
+
+            if frame_result and len(frame_result) > 0:
+                frames.append(frame_result[0])
+
+        return frames
