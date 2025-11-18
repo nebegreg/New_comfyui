@@ -44,6 +44,8 @@ test_*_output/
 *.mp4
 *.avi
 *.mov
+*.raw
+*.exr
 
 # Models (trop gros pour git)
 models/
