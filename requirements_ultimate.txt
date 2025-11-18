@@ -1,0 +1,98 @@
+# Mountain Studio Pro - Ultimate Features Requirements
+# Version: 2.0 - Ultimate Edition
+# Date: 2025-11-18
+
+# =========================================
+# REQUIRED DEPENDENCIES (Core Features)
+# =========================================
+
+# OpenGL for advanced rendering
+PyOpenGL>=3.1.7
+PyOpenGL-accelerate>=3.1.7
+
+# Linear algebra for camera and transformations
+pyrr>=0.10.3
+
+# =========================================
+# RECOMMENDED DEPENDENCIES
+# =========================================
+
+# HDRI/EXR export support
+# Note: May require system libraries (libopenexr-dev on Linux)
+OpenEXR>=3.2.0
+Imath>=3.1.9
+
+# =========================================
+# OPTIONAL DEPENDENCIES (AI Enhancement)
+# =========================================
+
+# For AI-enhanced HDRI generation
+# Requires 10-12 GB VRAM for SDXL
+# diffusers>=0.27.0
+# transformers>=4.38.0
+# accelerate>=0.27.0
+# torch>=2.0.0
+
+# Note: Uncomment above if you have sufficient VRAM and want AI enhancement
+# Install with: pip install diffusers transformers accelerate torch
+
+# =========================================
+# EXISTING DEPENDENCIES (From base system)
+# =========================================
+
+# Core
+numpy>=1.24.0
+scipy>=1.10.0
+Pillow>=10.0.0
+
+# UI
+PySide6>=6.5.0
+
+# Optional 3D visualization (for basic preview)
+# pyqtgraph>=0.13.0  # Used by enhanced_terrain_viewer_3d.py (basic version)
+
+# =========================================
+# SYSTEM REQUIREMENTS
+# =========================================
+
+# Graphics:
+# - OpenGL 3.3+ capable GPU
+# - Updated graphics drivers
+# - 2-4 GB VRAM for basic features
+# - 10-12 GB VRAM for AI HDRI enhancement
+# - 24 GB VRAM for maximum resolution AI enhancement
+
+# Display:
+# - X server or display server (for GUI)
+# - EGL support for headless rendering (optional)
+
+# =========================================
+# INSTALLATION INSTRUCTIONS
+# =========================================
+
+# Basic installation (required):
+# pip install -r requirements_ultimate.txt
+
+# Full installation with AI (optional, requires VRAM):
+# pip install -r requirements_ultimate.txt
+# pip install diffusers transformers accelerate torch
+
+# Linux system dependencies for OpenEXR:
+# sudo apt-get install libopenexr-dev python3-openexr
+
+# macOS system dependencies:
+# brew install openexr
+
+# =========================================
+# VERIFICATION
+# =========================================
+
+# To check if OpenGL is available:
+# python3 -c "from OpenGL.GL import *; print(glGetString(GL_VERSION))"
+
+# To check HDRI support:
+# python3 -c "from core.rendering.hdri_generator import OPENEXR_AVAILABLE, AI_AVAILABLE; print(f'EXR: {OPENEXR_AVAILABLE}, AI: {AI_AVAILABLE}')"
+
+# To run tests:
+# python3 examples/example_ultimate_viewer.py
+# python3 examples/example_hdri_generation.py
