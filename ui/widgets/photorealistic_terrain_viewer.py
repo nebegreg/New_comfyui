@@ -176,8 +176,10 @@ class PhotorealisticTerrainViewer(gl.GLViewWidget if OPENGL_AVAILABLE else objec
 
         # 2. Get base color (albedo)
         if self.use_pbr and self.pbr_textures.get('diffuse') is not None:
-            # Use PBR diffuse texture
+            # Use PBR diffuse texture - resize to match heightmap
             albedo = self.pbr_textures['diffuse'].astype(np.float32) / 255.0
+            if albedo.shape[:2] != (h, w):
+                albedo = self._resize_texture(albedo, (h, w))
         else:
             # Procedural altitude-based coloring
             albedo = self._generate_procedural_albedo(heightmap)
@@ -185,6 +187,10 @@ class PhotorealisticTerrainViewer(gl.GLViewWidget if OPENGL_AVAILABLE else objec
         # 3. Get roughness
         if self.use_pbr and self.pbr_textures.get('roughness') is not None:
             roughness = self.pbr_textures['roughness'].astype(np.float32) / 255.0
+            if roughness.shape[:2] != (h, w):
+                roughness = self._resize_texture(roughness, (h, w))
+            if len(roughness.shape) == 2:
+                roughness = np.expand_dims(roughness, axis=-1)
         else:
             # Calculate from slope
             roughness = self._calculate_roughness_from_slope(heightmap)
@@ -193,7 +199,10 @@ class PhotorealisticTerrainViewer(gl.GLViewWidget if OPENGL_AVAILABLE else objec
         # 4. Get AO
         if self.use_pbr and self.pbr_textures.get('ao') is not None:
             ao = self.pbr_textures['ao'].astype(np.float32) / 255.0
-            ao = np.expand_dims(ao, axis=-1)
+            if ao.shape[:2] != (h, w):
+                ao = self._resize_texture(ao, (h, w))
+            if len(ao.shape) == 2:
+                ao = np.expand_dims(ao, axis=-1)
         else:
             # Simple AO from height
             ao = ((heightmap - heightmap.min()) / (heightmap.max() - heightmap.min() + 1e-10))
@@ -248,6 +257,43 @@ class PhotorealisticTerrainViewer(gl.GLViewWidget if OPENGL_AVAILABLE else objec
         colors[:, :, 3] = 1.0
 
         return colors
+
+    def _resize_texture(self, texture: np.ndarray, target_size: Tuple[int, int]) -> np.ndarray:
+        """
+        Resize texture to match terrain resolution
+
+        Args:
+            texture: Input texture (H, W) or (H, W, C)
+            target_size: Target size (height, width)
+
+        Returns:
+            Resized texture
+        """
+        try:
+            from PIL import Image as PILImage
+
+            target_h, target_w = target_size
+
+            # Handle grayscale vs RGB
+            if len(texture.shape) == 2:
+                # Grayscale
+                img = PILImage.fromarray((texture * 255).astype(np.uint8), mode='L')
+                img_resized = img.resize((target_w, target_h), PILImage.BICUBIC)
+                result = np.array(img_resized).astype(np.float32) / 255.0
+            else:
+                # RGB
+                img = PILImage.fromarray((texture * 255).astype(np.uint8), mode='RGB')
+                img_resized = img.resize((target_w, target_h), PILImage.BICUBIC)
+                result = np.array(img_resized).astype(np.float32) / 255.0
+
+            return result
+        except Exception as e:
+            logger.warning(f"Failed to resize texture: {e}, using nearest neighbor fallback")
+            # Fallback: simple nearest neighbor
+            if len(texture.shape) == 2:
+                return texture[:target_h, :target_w]
+            else:
+                return texture[:target_h, :target_w, :]
 
     def _calculate_normals(
         self,
