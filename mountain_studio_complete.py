@@ -174,7 +174,8 @@ class VegetationGenerationThread(QThread):
 
             # Classify biomes
             self.log_message.emit("  📊 Classification des biomes...")
-            classifier = BiomeClassifier()
+            h, w = self.heightmap.shape
+            classifier = BiomeClassifier(width=w, height=h)
             biome_map = classifier.classify(self.heightmap)
 
             self.progress.emit(30)
