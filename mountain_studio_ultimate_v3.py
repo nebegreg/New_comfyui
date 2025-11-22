@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """
-Mountain Studio ULTIMATE v2.0 - Complete Professional Terrain Generation Suite
+Mountain Studio ULTIMATE v3.0 - Complete Professional Terrain Generation Suite
 ===============================================================================
 
-ALL-IN-ONE APPLICATION featuring:
+🆕 NEW IN V3.0:
+✅ 10+ Professional Presets (Alpes, Desert, Grand Canyon, Himalayas, etc.) - INTEGRATED!
+✅ Realistic Tree/Vegetation Generation (Pine, Spruce, Fir, Larch) - INTEGRATED!
+✅ Map Previews in GUI (Normal, Depth, Specular, Displacement, AO, etc.) - INTEGRATED!
+✅ Multiple Heightfield Algorithms (Perlin, Ridged, Voronoi, Diamond-Square, etc.)
+✅ Enhanced Progress Bars (Main + Sub-task with descriptions)
+✅ HDRI Applied to 3D View (Background + lighting)
+✅ ComfyUI Workflow Auto-Load (Fixed & validated)
+
+COMPLETE FEATURES:
 ✅ Ultra-realistic terrain generation (World Machine quality)
 ✅ Advanced 3D viewer with LIGHTING & SHADOWS
 ✅ AI texture generation (ComfyUI integration)
 ✅ Complete PBR map generation (Diffuse, Normal, Roughness, AO, Height, Metallic)
 ✅ HDRI panoramic generation (7 time presets)
 ✅ Professional exports (PNG, EXR, RAW, OBJ, Autodesk Flame)
-✅ Video generation with temporal consistency
 ✅ Vegetation system with biome classification
 ✅ VFX prompt generation for ultra-realistic rendering
 
@@ -23,6 +31,7 @@ Based on 2024/2025 industry standards:
 - Physically-based HDRI with Rayleigh scattering
 
 Author: Mountain Studio Pro Team
+Version: 3.0
 License: MIT
 """
 
@@ -104,6 +113,22 @@ try:
 except ImportError:
     FPS_CAMERA_AVAILABLE = False
     print("ℹ️ FPS camera not available (using basic camera)")
+
+# NEW IN V3: Presets & Vegetation
+try:
+    from config.professional_presets import PresetManager, CompletePreset
+    PRESETS_AVAILABLE = True
+except ImportError:
+    PRESETS_AVAILABLE = False
+    print("ℹ️ Professional presets not available (optional)")
+
+try:
+    from core.vegetation.vegetation_placer import VegetationPlacer, TreeInstance
+    from core.vegetation.biome_classifier import BiomeClassifier, BiomeType
+    VEGETATION_AVAILABLE = True
+except ImportError:
+    VEGETATION_AVAILABLE = False
+    print("ℹ️ Vegetation system not available (optional)")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -613,10 +638,18 @@ class MountainStudioUltimate(QMainWindow):
         if EXPORTER_AVAILABLE:
             self.exporter = ProfessionalExporter(str(self.output_dir))
 
+        # NEW IN V3: Presets & Vegetation
+        self.preset_manager = None
+        self.tree_instances = []
+        self.vegetation_placer = None
+
+        if PRESETS_AVAILABLE:
+            self.preset_manager = PresetManager()
+
         self.init_ui()
 
-        logger.info("🏔️ Mountain Studio ULTIMATE v2.0 initialized")
-        self.log("🏔️ Welcome to Mountain Studio ULTIMATE v2.0!")
+        logger.info("🏔️ Mountain Studio ULTIMATE v3.0 initialized")
+        self.log("🏔️ Welcome to Mountain Studio ULTIMATE v3.0!")
         self.log(f"📁 Output directory: {self.output_dir}")
 
         # Show available features
@@ -626,10 +659,12 @@ class MountainStudioUltimate(QMainWindow):
         self.log(f"  - PBR Generation: {PBR_AVAILABLE}")
         self.log(f"  - HDRI Generation: {HDRI_AVAILABLE}")
         self.log(f"  - Professional Export: {EXPORTER_AVAILABLE}")
+        self.log(f"  - Professional Presets: {PRESETS_AVAILABLE}")
+        self.log(f"  - Vegetation System: {VEGETATION_AVAILABLE}")
 
     def init_ui(self):
         """Initialize user interface"""
-        self.setWindowTitle("Mountain Studio ULTIMATE v2.0 - Professional Terrain Generation")
+        self.setWindowTitle("Mountain Studio ULTIMATE v3.0 - Professional Terrain Generation")
         self.setGeometry(100, 100, 1600, 1000)
 
         # Main widget
@@ -669,11 +704,42 @@ class MountainStudioUltimate(QMainWindow):
         export_tab = self._create_export_tab()
         self.tabs.addTab(export_tab, "💾 Export")
 
+        # NEW IN V3: Tab 7: Presets
+        if PRESETS_AVAILABLE:
+            presets_tab = self._create_presets_tab()
+            self.tabs.addTab(presets_tab, "🎯 Presets")
+
+        # NEW IN V3: Tab 8: Vegetation
+        if VEGETATION_AVAILABLE:
+            vegetation_tab = self._create_vegetation_tab()
+            self.tabs.addTab(vegetation_tab, "🌲 Vegetation")
+
+        # NEW IN V3: Tab 9: Map Previews
+        maps_preview_tab = self._create_maps_preview_tab()
+        self.tabs.addTab(maps_preview_tab, "🗺️ Maps Preview")
+
         left_layout.addWidget(self.tabs)
 
-        # Progress bar
+        # NEW IN V3: Enhanced Progress bars (main + sub-task)
+        progress_group = QGroupBox("📊 Progress")
+        progress_layout = QVBoxLayout()
+
+        self.progress_label_main = QLabel("Ready")
+        progress_layout.addWidget(self.progress_label_main)
+
         self.progress_bar = QProgressBar()
-        left_layout.addWidget(self.progress_bar)
+        progress_layout.addWidget(self.progress_bar)
+
+        self.progress_label_sub = QLabel("")
+        self.progress_label_sub.setStyleSheet("color: #666; font-size: 10px;")
+        progress_layout.addWidget(self.progress_label_sub)
+
+        self.progress_bar_sub = QProgressBar()
+        self.progress_bar_sub.setMaximumHeight(10)
+        progress_layout.addWidget(self.progress_bar_sub)
+
+        progress_group.setLayout(progress_layout)
+        left_layout.addWidget(progress_group)
 
         # Log area
         log_group = QGroupBox("📋 Generation Log")
@@ -1089,6 +1155,580 @@ class MountainStudioUltimate(QMainWindow):
 
         layout.addStretch()
         return tab
+
+    def _create_presets_tab(self) -> QWidget:
+        """Create presets selection tab - NEW IN V3"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # Category selection
+        category_group = QGroupBox("📁 Category")
+        category_layout = QVBoxLayout()
+
+        self.preset_category_combo = QComboBox()
+        self.preset_category_combo.addItems([
+            'All',
+            'VFX Production',
+            'Game Development',
+            'Photography',
+            'Artistic',
+            'Quick Test'
+        ])
+        self.preset_category_combo.currentTextChanged.connect(self.on_preset_category_changed)
+        category_layout.addWidget(self.preset_category_combo)
+
+        category_group.setLayout(category_layout)
+        layout.addWidget(category_group)
+
+        # Preset selection
+        preset_group = QGroupBox("🎯 Preset")
+        preset_layout = QVBoxLayout()
+
+        self.preset_combo = QComboBox()
+        self.preset_combo.currentTextChanged.connect(self.on_preset_selected)
+        preset_layout.addWidget(self.preset_combo)
+
+        # Load initial presets
+        self.update_preset_list('All')
+
+        preset_group.setLayout(preset_layout)
+        layout.addWidget(preset_group)
+
+        # Preset description
+        desc_group = QGroupBox("📋 Description")
+        desc_layout = QVBoxLayout()
+
+        self.preset_description = QTextEdit()
+        self.preset_description.setReadOnly(True)
+        self.preset_description.setMaximumHeight(150)
+        desc_layout.addWidget(self.preset_description)
+
+        desc_group.setLayout(desc_layout)
+        layout.addWidget(desc_group)
+
+        # Preset details
+        details_group = QGroupBox("⚙️ Parameters")
+        details_layout = QVBoxLayout()
+
+        self.preset_details = QTextEdit()
+        self.preset_details.setReadOnly(True)
+        self.preset_details.setMaximumHeight(200)
+        details_layout.addWidget(self.preset_details)
+
+        details_group.setLayout(details_layout)
+        layout.addWidget(details_group)
+
+        # Apply button
+        apply_btn = QPushButton("✅ APPLY PRESET")
+        apply_btn.setStyleSheet("QPushButton { background-color: #3498db; color: white; font-weight: bold; padding: 10px; }")
+        apply_btn.clicked.connect(self.apply_preset)
+        layout.addWidget(apply_btn)
+
+        layout.addStretch()
+        return tab
+
+    def _create_vegetation_tab(self) -> QWidget:
+        """Create vegetation generation tab - NEW IN V3"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # Enable/Disable
+        self.vegetation_enabled = QCheckBox("Enable Vegetation Generation")
+        self.vegetation_enabled.setChecked(True)
+        layout.addWidget(self.vegetation_enabled)
+
+        # Density settings
+        density_group = QGroupBox("🌲 Density")
+        density_layout = QGridLayout()
+
+        density_layout.addWidget(QLabel("Overall Density:"), 0, 0)
+        self.vegetation_density_slider = QSlider(Qt.Horizontal)
+        self.vegetation_density_slider.setRange(0, 100)
+        self.vegetation_density_slider.setValue(50)
+        self.vegetation_density_label = QLabel("0.50")
+        self.vegetation_density_slider.valueChanged.connect(
+            lambda v: self.vegetation_density_label.setText(f"{v/100:.2f}")
+        )
+        density_layout.addWidget(self.vegetation_density_slider, 0, 1)
+        density_layout.addWidget(self.vegetation_density_label, 0, 2)
+
+        density_layout.addWidget(QLabel("Min Spacing (m):"), 1, 0)
+        self.vegetation_spacing_spin = QDoubleSpinBox()
+        self.vegetation_spacing_spin.setRange(1.0, 20.0)
+        self.vegetation_spacing_spin.setValue(4.0)
+        self.vegetation_spacing_spin.setSingleStep(0.5)
+        density_layout.addWidget(self.vegetation_spacing_spin, 1, 1, 1, 2)
+
+        density_group.setLayout(density_layout)
+        layout.addWidget(density_group)
+
+        # Clustering
+        clustering_group = QGroupBox("🌳 Clustering")
+        clustering_layout = QGridLayout()
+
+        self.vegetation_clustering = QCheckBox("Use Clustering (Natural Groups)")
+        self.vegetation_clustering.setChecked(True)
+        clustering_layout.addWidget(self.vegetation_clustering, 0, 0, 1, 3)
+
+        clustering_layout.addWidget(QLabel("Cluster Size:"), 1, 0)
+        self.vegetation_cluster_size_spin = QSpinBox()
+        self.vegetation_cluster_size_spin.setRange(3, 20)
+        self.vegetation_cluster_size_spin.setValue(8)
+        clustering_layout.addWidget(self.vegetation_cluster_size_spin, 1, 1, 1, 2)
+
+        clustering_layout.addWidget(QLabel("Cluster Radius (m):"), 2, 0)
+        self.vegetation_cluster_radius_spin = QDoubleSpinBox()
+        self.vegetation_cluster_radius_spin.setRange(5.0, 50.0)
+        self.vegetation_cluster_radius_spin.setValue(15.0)
+        self.vegetation_cluster_radius_spin.setSingleStep(1.0)
+        clustering_layout.addWidget(self.vegetation_cluster_radius_spin, 2, 1, 1, 2)
+
+        clustering_group.setLayout(clustering_layout)
+        layout.addWidget(clustering_group)
+
+        # Species selection
+        species_group = QGroupBox("🌲 Species Mix")
+        species_layout = QVBoxLayout()
+
+        species_layout.addWidget(QLabel("Automatic based on terrain altitude/biome"))
+        species_layout.addWidget(QLabel("Available species: Pine, Spruce, Fir, Larch, Oak, Birch"))
+
+        species_group.setLayout(species_layout)
+        layout.addWidget(species_group)
+
+        # Generate button
+        self.generate_vegetation_btn = QPushButton("🌲 GENERATE VEGETATION")
+        self.generate_vegetation_btn.setStyleSheet("QPushButton { background-color: #27ae60; color: white; font-weight: bold; padding: 10px; }")
+        self.generate_vegetation_btn.clicked.connect(self.generate_vegetation)
+        layout.addWidget(self.generate_vegetation_btn)
+
+        # Stats
+        stats_group = QGroupBox("📊 Statistics")
+        stats_layout = QVBoxLayout()
+        self.vegetation_stats_label = QLabel("No vegetation generated yet.")
+        stats_layout.addWidget(self.vegetation_stats_label)
+        stats_group.setLayout(stats_layout)
+        layout.addWidget(stats_group)
+
+        # Export
+        export_group = QGroupBox("💾 Export")
+        export_layout = QGridLayout()
+
+        export_layout.addWidget(QLabel("Format:"), 0, 0)
+        self.vegetation_export_format = QComboBox()
+        self.vegetation_export_format.addItems(['JSON (Generic)', 'Unreal Engine', 'Unity'])
+        export_layout.addWidget(self.vegetation_export_format, 0, 1)
+
+        self.export_vegetation_btn = QPushButton("💾 Export Vegetation Instances")
+        self.export_vegetation_btn.clicked.connect(self.export_vegetation)
+        export_layout.addWidget(self.export_vegetation_btn, 1, 0, 1, 2)
+
+        export_group.setLayout(export_layout)
+        layout.addWidget(export_group)
+
+        layout.addStretch()
+        return tab
+
+    def _create_maps_preview_tab(self) -> QWidget:
+        """Create maps preview tab - NEW IN V3"""
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        # Generate all maps button
+        generate_maps_btn = QPushButton("🗺️ GENERATE ALL MAPS")
+        generate_maps_btn.setStyleSheet("QPushButton { background-color: #e74c3c; color: white; font-weight: bold; padding: 10px; }")
+        generate_maps_btn.clicked.connect(self.generate_all_maps)
+        layout.addWidget(generate_maps_btn)
+
+        # Maps grid
+        maps_group = QGroupBox("🗺️ Map Previews (Click to enlarge)")
+        maps_layout = QGridLayout()
+
+        # Create 8 map preview labels in 2x4 grid
+        self.map_preview_labels = {}
+        map_names = [
+            'Heightmap', 'Normal Map', 'Depth Map', 'Roughness Map',
+            'Displacement Map', 'AO Map', 'Specular Map', 'Diffuse Map'
+        ]
+
+        for i, name in enumerate(map_names):
+            row = i // 4
+            col = i % 4
+
+            # Label for map name
+            name_label = QLabel(name)
+            name_label.setAlignment(Qt.AlignCenter)
+            name_label.setStyleSheet("font-weight: bold;")
+            maps_layout.addWidget(name_label, row*2, col)
+
+            # Preview label
+            preview_label = QLabel()
+            preview_label.setMinimumSize(200, 200)
+            preview_label.setMaximumSize(200, 200)
+            preview_label.setScaledContents(True)
+            preview_label.setStyleSheet("border: 1px solid #ccc; background-color: #2a2a2a;")
+            preview_label.setAlignment(Qt.AlignCenter)
+            preview_label.setText("Not generated")
+            maps_layout.addWidget(preview_label, row*2+1, col)
+
+            self.map_preview_labels[name] = preview_label
+
+        maps_group.setLayout(maps_layout)
+        layout.addWidget(maps_group)
+
+        layout.addStretch()
+        return tab
+
+    # =============================================================================
+    # V3 NEW METHODS - PRESETS
+    # =============================================================================
+
+    def on_preset_category_changed(self, category: str):
+        """Update preset list when category changes"""
+        self.update_preset_list(category)
+
+    def update_preset_list(self, category: str):
+        """Update preset combo box based on category"""
+        self.preset_combo.clear()
+
+        if category == 'All':
+            presets = self.preset_manager.list_presets()
+        else:
+            # Map UI category to preset category
+            category_map = {
+                'VFX Production': 'vfx_production',
+                'Game Development': 'game_dev',
+                'Photography': 'photography',
+                'Artistic': 'artistic',
+                'Quick Test': 'quick_test'
+            }
+            preset_category = category_map.get(category)
+            if preset_category:
+                presets = self.preset_manager.list_presets(category=preset_category)
+            else:
+                presets = []
+
+        self.preset_combo.addItems(presets)
+
+    def on_preset_selected(self, preset_name: str):
+        """Show preset details when selected"""
+        if not preset_name:
+            return
+
+        preset = self.preset_manager.get_preset(preset_name)
+        if not preset:
+            return
+
+        # Update description
+        self.preset_description.setText(f"{preset.name}\n\n{preset.description}")
+
+        # Update details
+        details = f"""**Terrain**
+- Resolution: {preset.terrain.width}x{preset.terrain.height}
+- Type: {preset.terrain.mountain_type}
+- Scale: {preset.terrain.scale}
+- Octaves: {preset.terrain.octaves}
+- Seed: {preset.terrain.seed}
+- Hydraulic Erosion: {preset.terrain.apply_hydraulic_erosion} ({preset.terrain.erosion_iterations} iterations)
+- Thermal Erosion: {preset.terrain.apply_thermal_erosion}
+
+**Vegetation**
+- Enabled: {preset.vegetation.enabled}
+- Density: {preset.vegetation.density}
+- Min Spacing: {preset.vegetation.min_spacing}m
+- Clustering: {preset.vegetation.use_clustering}
+
+**Render**
+- Season: {preset.render.season}
+- Time: {preset.render.time_of_day}
+- Weather: {preset.render.weather}
+- Quality: {preset.render.quality_level}
+
+**Export**
+- Heightmap: {preset.export.export_heightmap}
+- Normal Map: {preset.export.export_normal_map}
+- PBR Splatmap: {preset.export.export_splatmap}
+- OBJ: {preset.export.export_obj}
+- Vegetation Instances: {preset.export.export_vegetation_instances}
+"""
+        self.preset_details.setText(details)
+
+    def apply_preset(self):
+        """Apply selected preset to all parameters"""
+        preset_name = self.preset_combo.currentText()
+        if not preset_name:
+            QMessageBox.warning(self, "Warning", "No preset selected!")
+            return
+
+        preset = self.preset_manager.get_preset(preset_name)
+        if not preset:
+            return
+
+        # Apply terrain parameters
+        self.width_spin.setValue(preset.terrain.width)
+        self.height_spin.setValue(preset.terrain.height)
+        self.scale_slider.setValue(int(preset.terrain.scale))
+        self.octaves_spin.setValue(preset.terrain.octaves)
+        self.ridge_slider.setValue(int(preset.terrain.domain_warp_strength * 100))
+        self.warp_slider.setValue(int(preset.terrain.domain_warp_strength * 100))
+
+        if preset.terrain.apply_hydraulic_erosion:
+            iterations = min(100, preset.terrain.erosion_iterations // 1000)
+            self.hydraulic_spin.setValue(iterations)
+        else:
+            self.hydraulic_spin.setValue(0)
+
+        if preset.terrain.apply_thermal_erosion:
+            self.thermal_spin.setValue(5)
+        else:
+            self.thermal_spin.setValue(0)
+
+        self.seed_spin.setValue(preset.terrain.seed)
+
+        self.log(f"✅ Applied preset: {preset.name}")
+        QMessageBox.information(self, "Preset Applied", f"Preset '{preset.name}' has been applied!\n\nClick 'GENERATE TERRAIN' to create.")
+
+    # =============================================================================
+    # V3 NEW METHODS - VEGETATION
+    # =============================================================================
+
+    def generate_vegetation(self):
+        """Generate realistic vegetation on terrain"""
+        if self.terrain is None:
+            QMessageBox.warning(self, "Warning", "Generate terrain first!")
+            return
+
+        if not self.vegetation_enabled.isChecked():
+            QMessageBox.information(self, "Info", "Vegetation is disabled. Enable it first.")
+            return
+
+        self.log("🌲 Generating vegetation...")
+        self.generate_vegetation_btn.setEnabled(False)
+
+        try:
+            # Create biome classifier
+            biome_classifier = BiomeClassifier(self.terrain)
+            biome_map = biome_classifier.classify()
+
+            # Create vegetation placer
+            h, w = self.terrain.shape
+            placer = VegetationPlacer(w, h, self.terrain, biome_map)
+
+            # Place vegetation
+            density = self.vegetation_density_slider.value() / 100.0
+            spacing = self.vegetation_spacing_spin.value()
+            use_clustering = self.vegetation_clustering.isChecked()
+            cluster_size = self.vegetation_cluster_size_spin.value()
+            cluster_radius = self.vegetation_cluster_radius_spin.value()
+
+            self.tree_instances = placer.place_vegetation(
+                density=density,
+                min_spacing=spacing,
+                use_clustering=use_clustering,
+                cluster_size=cluster_size,
+                cluster_radius=cluster_radius,
+                seed=self.seed_spin.value()
+            )
+
+            # Update stats
+            species_count = {}
+            for tree in self.tree_instances:
+                species_count[tree.species] = species_count.get(tree.species, 0) + 1
+
+            stats_text = f"Total trees: {len(self.tree_instances)}\n\nBy species:\n"
+            for species, count in sorted(species_count.items()):
+                stats_text += f"  {species}: {count}\n"
+
+            self.vegetation_stats_label.setText(stats_text)
+
+            self.log(f"✅ Vegetation generated: {len(self.tree_instances)} trees")
+            QMessageBox.information(self, "Success", f"Generated {len(self.tree_instances)} trees!")
+
+        except Exception as e:
+            self.log(f"❌ Vegetation generation error: {e}")
+            QMessageBox.critical(self, "Error", f"Vegetation generation failed:\n{e}")
+
+        finally:
+            self.generate_vegetation_btn.setEnabled(True)
+
+    def export_vegetation(self):
+        """Export vegetation instances for game engines"""
+        if not self.tree_instances:
+            QMessageBox.warning(self, "Warning", "Generate vegetation first!")
+            return
+
+        format_type = self.vegetation_export_format.currentText()
+
+        try:
+            output_path = self.output_dir / "vegetation_instances.json"
+
+            if format_type == 'JSON (Generic)':
+                data = {
+                    'version': '1.0',
+                    'total_count': len(self.tree_instances),
+                    'instances': [
+                        {
+                            'x': tree.x,
+                            'y': tree.y,
+                            'elevation': tree.elevation,
+                            'species': tree.species,
+                            'scale': tree.scale,
+                            'rotation': tree.rotation,
+                            'age': tree.age,
+                            'health': tree.health
+                        }
+                        for tree in self.tree_instances
+                    ]
+                }
+
+            elif format_type == 'Unreal Engine':
+                data = {
+                    'version': 'Unreal Engine 5',
+                    'instances': [
+                        {
+                            'asset': f'/Game/Trees/{tree.species.capitalize()}_01',
+                            'transform': {
+                                'translation': [float(tree.x), float(tree.y), float(tree.elevation * 100)],
+                                'rotation': [0.0, 0.0, float(tree.rotation)],
+                                'scale': [float(tree.scale), float(tree.scale), float(tree.scale)]
+                            }
+                        }
+                        for tree in self.tree_instances
+                    ]
+                }
+
+            elif format_type == 'Unity':
+                data = {
+                    'version': 'Unity',
+                    'treeInstances': [
+                        {
+                            'prototypeIndex': 0,
+                            'position': {'x': float(tree.x), 'y': float(tree.elevation), 'z': float(tree.y)},
+                            'widthScale': float(tree.scale),
+                            'heightScale': float(tree.scale),
+                            'rotation': float(tree.rotation),
+                            'color': {'r': 1.0, 'g': 1.0, 'b': 1.0, 'a': 1.0},
+                            'lightmapColor': {'r': 1.0, 'g': 1.0, 'b': 1.0, 'a': 1.0}
+                        }
+                        for tree in self.tree_instances
+                    ]
+                }
+
+            # Save
+            with open(output_path, 'w') as f:
+                json.dump(data, f, indent=2)
+
+            self.log(f"💾 Exported vegetation: {output_path}")
+            QMessageBox.information(self, "Success", f"Vegetation exported to:\n{output_path}")
+
+        except Exception as e:
+            self.log(f"❌ Export error: {e}")
+            QMessageBox.critical(self, "Error", f"Export failed:\n{e}")
+
+    # =============================================================================
+    # V3 NEW METHODS - MAP PREVIEWS
+    # =============================================================================
+
+    def generate_all_maps(self):
+        """Generate all PBR maps and display previews"""
+        if self.terrain is None:
+            QMessageBox.warning(self, "Warning", "Generate terrain first!")
+            return
+
+        self.log("🗺️ Generating all maps...")
+        self.progress_label_main.setText("Generating maps...")
+        self.progress_bar.setValue(0)
+
+        try:
+            from core.rendering.pbr_texture_generator import PBRTextureGenerator
+
+            generator = PBRTextureGenerator(self.terrain)
+
+            # Generate maps (8 total, each is 12.5%)
+            maps = {
+                'Heightmap': self.terrain,
+                'Normal Map': None,
+                'Depth Map': None,
+                'Roughness Map': None,
+                'Displacement Map': None,
+                'AO Map': None,
+                'Specular Map': None,
+                'Diffuse Map': None
+            }
+
+            # Heightmap (already done)
+            self.progress_bar.setValue(12)
+            self.progress_label_sub.setText("Heightmap ready")
+
+            # Normal Map
+            self.progress_label_sub.setText("Generating normal map...")
+            maps['Normal Map'] = generator.generate_normal_map()
+            self.progress_bar.setValue(25)
+
+            # Depth Map
+            self.progress_label_sub.setText("Generating depth map...")
+            maps['Depth Map'] = self.terrain.copy()
+            self.progress_bar.setValue(37)
+
+            # Roughness Map
+            self.progress_label_sub.setText("Generating roughness map...")
+            maps['Roughness Map'] = generator.generate_roughness_map()
+            self.progress_bar.setValue(50)
+
+            # Displacement Map
+            self.progress_label_sub.setText("Generating displacement map...")
+            maps['Displacement Map'] = generator.generate_displacement_map()
+            self.progress_bar.setValue(62)
+
+            # AO Map
+            self.progress_label_sub.setText("Generating ambient occlusion...")
+            maps['AO Map'] = generator.generate_ao_map()
+            self.progress_bar.setValue(75)
+
+            # Specular Map
+            self.progress_label_sub.setText("Generating specular map...")
+            maps['Specular Map'] = generator.generate_specular_map()
+            self.progress_bar.setValue(87)
+
+            # Diffuse Map
+            self.progress_label_sub.setText("Generating diffuse map...")
+            maps['Diffuse Map'] = generator.generate_diffuse_map()
+            self.progress_bar.setValue(100)
+
+            # Update preview labels
+            for name, map_data in maps.items():
+                if map_data is not None:
+                    # Convert to QPixmap for display
+                    if len(map_data.shape) == 2:
+                        # Grayscale
+                        normalized = ((map_data - map_data.min()) / (map_data.max() - map_data.min()) * 255).astype(np.uint8)
+                        h, w = normalized.shape
+                        bytes_per_line = w
+                        qt_image = QImage(normalized.data, w, h, bytes_per_line, QImage.Format_Grayscale8)
+                    else:
+                        # RGB
+                        normalized = ((map_data - map_data.min()) / (map_data.max() - map_data.min()) * 255).astype(np.uint8)
+                        h, w, c = normalized.shape
+                        bytes_per_line = w * c
+                        qt_image = QImage(normalized.data, w, h, bytes_per_line, QImage.Format_RGB888)
+
+                    pixmap = QPixmap.fromImage(qt_image)
+                    self.map_preview_labels[name].setPixmap(pixmap)
+
+            self.progress_label_sub.setText("All maps generated!")
+            self.log("✅ All maps generated successfully")
+            QMessageBox.information(self, "Success", "All 8 maps generated successfully!")
+
+        except Exception as e:
+            self.log(f"❌ Map generation error: {e}")
+            QMessageBox.critical(self, "Error", f"Map generation failed:\n{e}")
+            import traceback
+            traceback.print_exc()
+
+        finally:
+            self.progress_bar.setValue(100)
+            self.progress_label_main.setText("Ready")
+            self.progress_label_sub.setText("")
 
     # =============================================================================
     # TERRAIN GENERATION
